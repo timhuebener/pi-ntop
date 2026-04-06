@@ -1,0 +1,34 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "go mod tidy",
+			"type": "shell",
+			"command": "go",
+			"args": [
+				"mod",
+				"tidy"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "run pi-ntop bootstrap",
+			"type": "shell",
+			"command": "go",
+			"args": [
+				"run",
+				"./cmd/pi-ntop"
+			],
+			"isBackground": true,
+			"group": "test"
+		},
+		{
+			"label": "run pi-ntop bootstrap 8091",
+			"type": "shell",
+			"command": "PI_NTOP_HTTP_ADDR=:8091 go run ./cmd/pi-ntop",
+			"isBackground": true,
+			"group": "test"
+		}
+	]
+}

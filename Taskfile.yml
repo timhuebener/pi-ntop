@@ -1,0 +1,17 @@
+version: "3"
+
+tasks:
+  run:
+    desc: Run the bootstrap application
+    cmds:
+      - go run ./cmd/pi-ntop
+
+  templ:
+    desc: Install the templ CLI locally
+    cmds:
+      - go install github.com/a-h/templ/cmd/templ@latest
+
+  tidy:
+    desc: Resolve module dependencies
+    cmds:
+      - go mod tidy
