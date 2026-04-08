@@ -16,6 +16,8 @@ services:
       PI_NTOP_HEALTHCHECK_URL: ${PI_NTOP_HEALTHCHECK_URL:-http://127.0.0.1:8090/healthz}
     volumes:
       - ./data:/data
+    ports:
+      - "${PI_NTOP_HOST_PORT:-8090}:8090"
     expose:
       - "8090"
     healthcheck:
