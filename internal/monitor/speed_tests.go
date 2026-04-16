@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"pi-ntop/internal/config"
@@ -25,11 +27,15 @@ type SpeedCollector struct {
 	uploadBytes       int64
 	lastRun           map[int64]time.Time
 	client            *http.Client
+
+	ifaceClientsMu sync.RWMutex
+	ifaceClients   map[string]*http.Client // keyed by interface name
 }
 
 type SpeedTargetSnapshot struct {
 	ID              int64              `json:"id"`
 	Name            string             `json:"name"`
+	InterfaceName   string             `json:"interfaceName"`
 	DownloadURL     string             `json:"downloadUrl"`
 	UploadURL       string             `json:"uploadUrl"`
 	IntervalSeconds int                `json:"intervalSeconds"`
@@ -64,6 +70,7 @@ type SpeedTestPoint struct {
 type speedTestTarget struct {
 	ID              int64
 	Name            string
+	InterfaceName   string
 	DownloadURL     string
 	UploadURL       string
 	IntervalSeconds int
@@ -82,6 +89,7 @@ type speedTestMeasurement struct {
 type latestSpeedRow struct {
 	TargetID        int64
 	Name            string
+	InterfaceName   string
 	DownloadURL     string
 	UploadURL       string
 	IntervalSeconds int
@@ -122,6 +130,7 @@ func NewSpeedCollector(database *sql.DB, targets []config.SpeedTestTarget, defau
 		client: &http.Client{
 			Timeout: requestTimeout,
 		},
+		ifaceClients: make(map[string]*http.Client),
 	}
 }
 
@@ -188,7 +197,20 @@ func (c *SpeedCollector) collectTarget(ctx context.Context, target speedTestTarg
 	testCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
-	measurement := c.executeSpeedTest(testCtx, target)
+	httpClient, err := c.clientForInterface(target.InterfaceName)
+	if err != nil {
+		// Interface not available — record a failed test.
+		measurement := speedTestMeasurement{
+			Status:       "failed",
+			ErrorMessage: fmt.Sprintf("interface %s: %v", target.InterfaceName, err),
+		}
+		if persistErr := c.persistSpeedTest(ctx, target.ID, startedAt, time.Now().UTC(), measurement); persistErr != nil {
+			return fmt.Errorf("persist speed test: %w", persistErr)
+		}
+		return nil
+	}
+
+	measurement := c.executeSpeedTest(testCtx, target, httpClient)
 	if err := c.persistSpeedTest(ctx, target.ID, startedAt, time.Now().UTC(), measurement); err != nil {
 		return fmt.Errorf("persist speed test: %w", err)
 	}
@@ -196,14 +218,14 @@ func (c *SpeedCollector) collectTarget(ctx context.Context, target speedTestTarg
 	return nil
 }
 
-func (c *SpeedCollector) executeSpeedTest(ctx context.Context, target speedTestTarget) speedTestMeasurement {
+func (c *SpeedCollector) executeSpeedTest(ctx context.Context, target speedTestTarget, httpClient *http.Client) speedTestMeasurement {
 	measurement := speedTestMeasurement{Status: "completed"}
 	errors := make([]string, 0, 2)
 	attemptedChecks := 0
 	successfulChecks := 0
 
 	attemptedChecks++
-	downloadBps, downloadBytes, latencyMs, err := c.measureDownload(ctx, target.DownloadURL, c.downloadBytes)
+	downloadBps, downloadBytes, latencyMs, err := c.measureDownload(ctx, httpClient, target.DownloadURL, c.downloadBytes)
 	if err != nil {
 		errors = append(errors, "download: "+err.Error())
 	} else {
@@ -215,7 +237,7 @@ func (c *SpeedCollector) executeSpeedTest(ctx context.Context, target speedTestT
 
 	if target.UploadURL != "" {
 		attemptedChecks++
-		uploadBps, uploadBytes, err := c.measureUpload(ctx, target.UploadURL, c.uploadBytes)
+		uploadBps, uploadBytes, err := c.measureUpload(ctx, httpClient, target.UploadURL, c.uploadBytes)
 		if err != nil {
 			errors = append(errors, "upload: "+err.Error())
 		} else {
@@ -230,7 +252,7 @@ func (c *SpeedCollector) executeSpeedTest(ctx context.Context, target speedTestT
 	return measurement
 }
 
-func (c *SpeedCollector) measureDownload(ctx context.Context, rawURL string, maxBytes int64) (float64, int64, float64, error) {
+func (c *SpeedCollector) measureDownload(ctx context.Context, httpClient *http.Client, rawURL string, maxBytes int64) (float64, int64, float64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("build request: %w", err)
@@ -238,7 +260,7 @@ func (c *SpeedCollector) measureDownload(ctx context.Context, rawURL string, max
 	req.Header.Set("Cache-Control", "no-cache")
 
 	startedAt := time.Now()
-	resp, err := c.client.Do(req)
+	resp, err := httpClient.Do(req)
 	latency := time.Since(startedAt)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("request download: %w", err)
@@ -266,7 +288,7 @@ func (c *SpeedCollector) measureDownload(ctx context.Context, rawURL string, max
 	return throughputBps(bytesRead, time.Since(readStartedAt)), bytesRead, latency.Seconds() * 1000, nil
 }
 
-func (c *SpeedCollector) measureUpload(ctx context.Context, rawURL string, size int64) (float64, int64, error) {
+func (c *SpeedCollector) measureUpload(ctx context.Context, httpClient *http.Client, rawURL string, size int64) (float64, int64, error) {
 	if size <= 0 {
 		return 0, 0, nil
 	}
@@ -283,7 +305,7 @@ func (c *SpeedCollector) measureUpload(ctx context.Context, rawURL string, size 
 	req.Header.Set("Cache-Control", "no-cache")
 
 	startedAt := time.Now()
-	resp, err := c.client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, 0, fmt.Errorf("request upload: %w", err)
 	}
@@ -314,6 +336,102 @@ func deriveSpeedStatus(attemptedChecks, successfulChecks int) string {
 	return "partial"
 }
 
+// clientForInterface returns an *http.Client bound to the given interface name.
+// If ifaceName is empty, the default (unbound) client is returned.
+func (c *SpeedCollector) clientForInterface(ifaceName string) (*http.Client, error) {
+	if ifaceName == "" {
+		return c.client, nil
+	}
+
+	c.ifaceClientsMu.RLock()
+	client, ok := c.ifaceClients[ifaceName]
+	c.ifaceClientsMu.RUnlock()
+	if ok {
+		return client, nil
+	}
+
+	// Resolve interface to a local address for binding.
+	localAddr, err := resolveInterfaceAddr(ifaceName)
+	if err != nil {
+		return nil, err
+	}
+
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			LocalAddr: localAddr,
+			Timeout:   c.requestTimeout,
+		}).DialContext,
+	}
+
+	client = &http.Client{
+		Timeout:   c.requestTimeout,
+		Transport: transport,
+	}
+
+	c.ifaceClientsMu.Lock()
+	c.ifaceClients[ifaceName] = client
+	c.ifaceClientsMu.Unlock()
+
+	return client, nil
+}
+
+// resolveInterfaceAddr looks up the named network interface and returns
+// the first non-loopback IPv4 address suitable for binding.
+func resolveInterfaceAddr(name string) (*net.TCPAddr, error) {
+	iface, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("lookup interface %s: %w", name, err)
+	}
+
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("get addrs for %s: %w", name, err)
+	}
+
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLoopback() {
+			continue
+		}
+		// Prefer IPv4.
+		if ip4 := ip.To4(); ip4 != nil {
+			return &net.TCPAddr{IP: ip4}, nil
+		}
+	}
+
+	// Fall back to first IPv6 if no IPv4 found.
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLoopback() {
+			continue
+		}
+		return &net.TCPAddr{IP: ip}, nil
+	}
+
+	return nil, fmt.Errorf("interface %s has no usable IP address", name)
+}
+
+// InvalidateInterfaceClient removes the cached client for the given interface,
+// forcing a fresh lookup on the next speed test. Useful when an interface's
+// IP address changes.
+func (c *SpeedCollector) InvalidateInterfaceClient(ifaceName string) {
+	c.ifaceClientsMu.Lock()
+	delete(c.ifaceClients, ifaceName)
+	c.ifaceClientsMu.Unlock()
+}
+
 func (c *SpeedCollector) syncConfiguredTargets(ctx context.Context) error {
 	if len(c.configuredTargets) == 0 {
 		return nil
@@ -336,9 +454,9 @@ func (c *SpeedCollector) syncConfiguredTargets(ctx context.Context) error {
 	}()
 
 	const query = `
-		INSERT INTO speed_test_targets (name, download_url, upload_url, enabled, interval_seconds)
-		VALUES (?, ?, ?, 1, ?)
-		ON CONFLICT(download_url) DO UPDATE SET
+		INSERT INTO speed_test_targets (name, download_url, upload_url, interface_name, enabled, interval_seconds)
+		VALUES (?, ?, ?, ?, 1, ?)
+		ON CONFLICT(download_url, interface_name) DO UPDATE SET
 			name = excluded.name,
 			upload_url = excluded.upload_url,
 			enabled = 1,
@@ -346,7 +464,7 @@ func (c *SpeedCollector) syncConfiguredTargets(ctx context.Context) error {
 	`
 
 	for _, target := range c.configuredTargets {
-		if _, err := tx.ExecContext(ctx, query, target.Name, target.DownloadURL, target.UploadURL, defaultIntervalSeconds); err != nil {
+		if _, err := tx.ExecContext(ctx, query, target.Name, target.DownloadURL, target.UploadURL, target.InterfaceName, defaultIntervalSeconds); err != nil {
 			return fmt.Errorf("upsert speed target %s: %w", target.DownloadURL, err)
 		}
 	}
@@ -360,7 +478,7 @@ func (c *SpeedCollector) syncConfiguredTargets(ctx context.Context) error {
 
 func (c *SpeedCollector) listEnabledTargets(ctx context.Context) ([]speedTestTarget, error) {
 	const query = `
-		SELECT id, name, download_url, upload_url, interval_seconds
+		SELECT id, name, download_url, upload_url, interface_name, interval_seconds
 		FROM speed_test_targets
 		WHERE enabled = 1
 		ORDER BY name ASC, download_url ASC;
@@ -375,7 +493,7 @@ func (c *SpeedCollector) listEnabledTargets(ctx context.Context) ([]speedTestTar
 	var targets []speedTestTarget
 	for rows.Next() {
 		var target speedTestTarget
-		if err := rows.Scan(&target.ID, &target.Name, &target.DownloadURL, &target.UploadURL, &target.IntervalSeconds); err != nil {
+		if err := rows.Scan(&target.ID, &target.Name, &target.DownloadURL, &target.UploadURL, &target.InterfaceName, &target.IntervalSeconds); err != nil {
 			return nil, fmt.Errorf("scan speed test target: %w", err)
 		}
 		targets = append(targets, target)
@@ -441,6 +559,7 @@ func (s *Service) listSpeedTargets(ctx context.Context, historyLimit int) ([]Spe
 		target := SpeedTargetSnapshot{
 			ID:              row.TargetID,
 			Name:            row.Name,
+			InterfaceName:   row.InterfaceName,
 			DownloadURL:     row.DownloadURL,
 			UploadURL:       row.UploadURL,
 			IntervalSeconds: row.IntervalSeconds,
@@ -490,6 +609,7 @@ func (s *Service) listLatestSpeedRows(ctx context.Context) ([]latestSpeedRow, er
 		SELECT
 			t.id,
 			t.name,
+			t.interface_name,
 			t.download_url,
 			t.upload_url,
 			t.interval_seconds,
@@ -527,6 +647,7 @@ func (s *Service) listLatestSpeedRows(ctx context.Context) ([]latestSpeedRow, er
 		if err := rows.Scan(
 			&row.TargetID,
 			&row.Name,
+			&row.InterfaceName,
 			&row.DownloadURL,
 			&row.UploadURL,
 			&row.IntervalSeconds,
@@ -571,6 +692,7 @@ func (s *Service) SpeedTestHistory(ctx context.Context, since time.Time) ([]Spee
 		target := SpeedTargetSnapshot{
 			ID:              row.TargetID,
 			Name:            row.Name,
+			InterfaceName:   row.InterfaceName,
 			DownloadURL:     row.DownloadURL,
 			UploadURL:       row.UploadURL,
 			IntervalSeconds: row.IntervalSeconds,

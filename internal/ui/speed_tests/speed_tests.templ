@@ -10,6 +10,7 @@ import (
 
 type TargetChartData struct {
 	Name           string
+	InterfaceName  string
 	IsHealthy      bool
 	HasUpload      bool
 	Labels         []string
@@ -83,6 +84,9 @@ templ targetCard(idx int, target TargetChartData) {
 			<div class="flex w-full items-center justify-between">
 				<div class="flex items-center gap-2">
 					<span class="text-sm font-medium">{ target.Name }</span>
+					if target.InterfaceName != "" {
+						<span class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">{ target.InterfaceName }</span>
+					}
 					if target.IsHealthy {
 						<span class="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">healthy</span>
 					} else {

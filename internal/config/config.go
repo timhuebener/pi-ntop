@@ -15,9 +15,10 @@ const (
 )
 
 type SpeedTestTarget struct {
-	Name        string
-	DownloadURL string
-	UploadURL   string
+	Name          string
+	InterfaceName string
+	DownloadURL   string
+	UploadURL     string
 }
 
 type AlertThresholds struct {
@@ -334,10 +335,12 @@ func parseSpeedTestTargets(raw string) []SpeedTestTarget {
 		if !ok {
 			continue
 		}
-		if _, exists := seen[target.DownloadURL]; exists {
+		// Dedup on download_url + interface_name combo.
+		key := target.DownloadURL + "\x00" + target.InterfaceName
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[target.DownloadURL] = struct{}{}
+		seen[key] = struct{}{}
 		targets = append(targets, target)
 	}
 	return targets
@@ -352,6 +355,16 @@ func parseSpeedTestTarget(raw string) (SpeedTestTarget, bool) {
 	for index := range segments {
 		segments[index] = strings.TrimSpace(segments[index])
 	}
+
+	// Supported formats (backward compatible):
+	//   DownloadURL
+	//   DownloadURL|UploadURL
+	//   Name|DownloadURL
+	//   Name|DownloadURL|UploadURL
+	//   Name|@InterfaceName|DownloadURL
+	//   Name|@InterfaceName|DownloadURL|UploadURL
+	//
+	// An interface name is indicated by a leading '@' character, e.g. @wlan0.
 
 	switch len(segments) {
 	case 1:
@@ -378,18 +391,32 @@ func parseSpeedTestTarget(raw string) (SpeedTestTarget, bool) {
 			DownloadURL: segments[1],
 		}, true
 	default:
-		if !looksLikeURL(segments[1]) {
+		// 3+ segments. Check if segments[1] is an @interface specifier.
+		ifaceName := ""
+		urlStart := 1 // index of first URL segment
+		if looksLikeInterface(segments[1]) {
+			ifaceName = segments[1][1:] // strip leading '@'
+			urlStart = 2
+		}
+
+		if urlStart >= len(segments) || !looksLikeURL(segments[urlStart]) {
 			return SpeedTestTarget{}, false
 		}
+
 		target := SpeedTestTarget{
-			Name:        speedTargetName(segments[0], segments[1]),
-			DownloadURL: segments[1],
+			Name:          speedTargetName(segments[0], segments[urlStart]),
+			InterfaceName: ifaceName,
+			DownloadURL:   segments[urlStart],
 		}
-		if len(segments) > 2 && looksLikeURL(segments[2]) {
-			target.UploadURL = segments[2]
+		if urlStart+1 < len(segments) && looksLikeURL(segments[urlStart+1]) {
+			target.UploadURL = segments[urlStart+1]
 		}
 		return target, true
 	}
+}
+
+func looksLikeInterface(s string) bool {
+	return len(s) > 1 && s[0] == '@' && !looksLikeURL(s)
 }
 
 func looksLikeURL(raw string) bool {

@@ -64,6 +64,7 @@ func buildTargetCharts(targets []monitor.SpeedTargetSnapshot, period string) []s
 
 		result = append(result, speedtests.TargetChartData{
 			Name:           t.Name,
+			InterfaceName:  t.InterfaceName,
 			IsHealthy:      t.IsHealthy,
 			HasUpload:      t.HasUpload,
 			Labels:         labels,

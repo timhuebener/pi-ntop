@@ -39,7 +39,7 @@ func TestSpeedCollectorExecuteSpeedTest(t *testing.T) {
 		Name:        "local",
 		DownloadURL: server.URL,
 		UploadURL:   server.URL,
-	})
+	}, collector.client)
 
 	if measurement.Status != "completed" {
 		t.Fatalf("expected completed status, got %q", measurement.Status)

@@ -24,6 +24,7 @@ func RunMigrations(database *sql.DB) (err error) {
 	databaseDriver, err := sqlitemigrate.WithInstance(database, &sqlitemigrate.Config{
 		DatabaseName:    "pi-ntop",
 		MigrationsTable: "schema_migrations",
+		NoTxWrap:        true,
 	})
 	if err != nil {
 		return fmt.Errorf("create sqlite migration driver: %w", err)
