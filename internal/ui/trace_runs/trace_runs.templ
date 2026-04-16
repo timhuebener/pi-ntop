@@ -1,0 +1,135 @@
+package traceruns
+
+import (
+	"fmt"
+	"github.com/templui/templui/components/card"
+	"github.com/templui/templui/components/chart"
+	"github.com/templui/templui/components/sidebar"
+	"pi-ntop/internal/ui/shared"
+)
+
+type TraceRunChartData struct {
+	Name           string
+	Host           string
+	Status         string
+	RouteChanged   bool
+	HasDegradedHop bool
+	Labels         []string
+	HopCounts      []float64
+	DegradedCounts []float64
+	RunCount       int
+	FailCount      int
+	RouteChanges   int
+}
+
+type PageData struct {
+	Period  string
+	Targets []TraceRunChartData
+}
+
+templ TraceRunsPage(data PageData) {
+	@shared.PageHead("Trace Runs")
+	@sidebar.Layout(sidebar.LayoutProps{Class: "h-svh"}) {
+		@shared.AppSidebar(shared.NavContext{ActivePage: "trace-runs"})
+		@sidebar.Inset() {
+			<div class="flex h-full flex-col">
+				<div class="flex h-14 items-center gap-4 px-6 border-b border-border">
+					@sidebar.Trigger()
+					<h1 class="text-base font-semibold">Trace Runs</h1>
+					@shared.PeriodPicker("/trace-runs", data.Period)
+				</div>
+				<div class="flex-1 overflow-auto p-6">
+					<div class="mb-6 rounded-lg border border-border bg-muted/50 p-4 text-sm text-muted-foreground">
+						<p class="font-medium text-foreground">Traceroute Run History</p>
+						<p class="mt-1">Each run executes a traceroute to a configured target and records hop count, route fingerprint, and degraded hops. Use this to detect route changes (ISP rerouting), increasing hop counts, and growing numbers of degraded hops that indicate network path problems.</p>
+					</div>
+					if len(data.Targets) == 0 {
+						@shared.EmptyState("No trace targets configured.", "Add targets via the PI_NTOP_TRACE_TARGETS environment variable.")
+					} else {
+						<div class="grid gap-6">
+							for i, target := range data.Targets {
+								@traceRunCard(i, target)
+							}
+						</div>
+					}
+				</div>
+			</div>
+		}
+	}
+}
+
+templ traceRunCard(idx int, target TraceRunChartData) {
+	@card.Card(card.Props{Class: "flex flex-col flex-1 min-h-0"}) {
+		@card.Header() {
+			<div class="flex w-full items-center justify-between">
+				<div class="flex items-center gap-2">
+					<span class="text-sm font-medium">{ target.Name }</span>
+					<span class="text-xs text-muted-foreground">({ target.Host })</span>
+					if target.Status == "completed" && !target.HasDegradedHop {
+						<span class="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">healthy</span>
+					} else if target.HasDegradedHop {
+						<span class="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400">degraded</span>
+					} else if target.Status == "failed" {
+						<span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/40 dark:text-red-400">failed</span>
+					} else {
+						<span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">{ target.Status }</span>
+					}
+					if target.RouteChanged {
+						<span class="inline-flex items-center rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700 dark:bg-orange-900/40 dark:text-orange-400">route changed</span>
+					}
+				</div>
+				<div class="flex items-center gap-4 text-xs text-muted-foreground">
+					<span class="text-muted-foreground/70">{ fmt.Sprintf("%d run(s)", target.RunCount) }</span>
+					if target.FailCount > 0 {
+						<span class="text-red-600 dark:text-red-400">{ fmt.Sprintf("%d failed", target.FailCount) }</span>
+					}
+					if target.RouteChanges > 0 {
+						<span class="text-orange-600 dark:text-orange-400">{ fmt.Sprintf("%d route change(s)", target.RouteChanges) }</span>
+					}
+				</div>
+			</div>
+		}
+		@card.Content(card.ContentProps{Class: "flex-1 min-h-0 pt-4"}) {
+			if len(target.Labels) == 0 {
+				<div class="flex h-40 items-center justify-center text-xs text-muted-foreground">
+					No data in selected period
+				</div>
+			} else {
+				@chart.Chart(buildTraceRunChartProps(idx, target))
+			}
+		}
+	}
+}
+
+func buildTraceRunChartProps(idx int, target TraceRunChartData) chart.Props {
+	return chart.Props{
+		ID:          fmt.Sprintf("trace-run-chart-%d", idx),
+		Variant:     chart.VariantLine,
+		Class:       "h-[60svh]",
+		ShowXAxis:   true,
+		ShowYAxis:   true,
+		ShowXLabels: true,
+		ShowYLabels: true,
+		ShowXGrid:   false,
+		ShowYGrid:   true,
+		Data: chart.Data{
+			Labels: target.Labels,
+			Datasets: []chart.Dataset{
+				{
+					Label:       "Hop Count",
+					Data:        target.HopCounts,
+					BorderColor: "#3b82f6",
+					BorderWidth: 2,
+					Tension:     0.3,
+				},
+				{
+					Label:       "Degraded Hops",
+					Data:        target.DegradedCounts,
+					BorderColor: "#ef4444",
+					BorderWidth: 2,
+					Tension:     0.3,
+				},
+			},
+		},
+	}
+}

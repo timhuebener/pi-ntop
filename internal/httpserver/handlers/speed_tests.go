@@ -10,24 +10,14 @@ import (
 	"github.com/a-h/templ"
 )
 
-var speedTestPeriods = map[string]time.Duration{
-	"1h":  time.Hour,
-	"6h":  6 * time.Hour,
-	"24h": 24 * time.Hour,
-	"7d":  7 * 24 * time.Hour,
-	"30d": 30 * 24 * time.Hour,
-}
-
-const defaultSpeedPeriod = "24h"
-
 func NewSpeedTestsPageHandler(monitorService *monitor.Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		period := r.URL.Query().Get("period")
-		if _, ok := speedTestPeriods[period]; !ok {
-			period = defaultSpeedPeriod
+		if _, ok := defaultPeriods[period]; !ok {
+			period = defaultPeriod
 		}
 
-		dur := speedTestPeriods[period]
+		dur := defaultPeriods[period]
 		since := time.Now().UTC().Add(-dur)
 
 		targets, err := monitorService.SpeedTestHistory(r.Context(), since)

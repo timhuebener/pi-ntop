@@ -614,15 +614,24 @@ func (s *Service) SpeedTestHistory(ctx context.Context, since time.Time) ([]Spee
 }
 
 func (s *Service) listSpeedHistorySince(ctx context.Context, since time.Time) (map[int64][]SpeedTestPoint, error) {
+	const maxPointsPerTarget = 500
+
 	const query = `
+		WITH numbered AS (
+			SELECT target_id, started_at, download_bps, upload_bps, latency_ms, status,
+				ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at ASC) AS rn,
+				COUNT(*) OVER (PARTITION BY target_id) AS cnt
+			FROM speed_tests
+			WHERE started_at >= ?
+		)
 		SELECT target_id, started_at, download_bps, upload_bps, latency_ms, status
-		FROM speed_tests
-		WHERE started_at >= ?
+		FROM numbered
+		WHERE cnt <= ? OR rn % MAX(1, cnt / ?) = 0 OR rn = cnt
 		ORDER BY target_id ASC, started_at ASC;
 	`
 
 	sinceStr := formatTimestamp(since)
-	rows, err := s.db.QueryContext(ctx, query, sinceStr)
+	rows, err := s.db.QueryContext(ctx, query, sinceStr, maxPointsPerTarget, maxPointsPerTarget)
 	if err != nil {
 		return nil, fmt.Errorf("query speed history since: %w", err)
 	}

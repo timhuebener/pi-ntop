@@ -5,6 +5,7 @@ import (
 	"github.com/templui/templui/components/card"
 	"github.com/templui/templui/components/chart"
 	"github.com/templui/templui/components/sidebar"
+	"pi-ntop/internal/ui/shared"
 )
 
 type TargetChartData struct {
@@ -39,132 +40,33 @@ var periodOptions = []struct {
 }
 
 templ SpeedTestsPage(data PageData) {
-	<head>
-		<meta charset="UTF-8"/>
-		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-		<title>Speed Tests – pi-ntop</title>
-		<link rel="stylesheet" href="/assets/css/output.css"/>
-		<script>
-			(function(){
-				var t = localStorage.getItem('pi-ntop-theme');
-				if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-					document.documentElement.classList.add('dark');
-				}
-			})();
-		</script>
-		@sidebar.Script()
-		@chart.Script()
-	</head>
+	@shared.PageHead("Speed Tests")
 	@sidebar.Layout(sidebar.LayoutProps{Class: "h-svh"}) {
-		@sidebar.Sidebar(sidebar.Props{
-				Collapsed: false,
-			}) {
-				@sidebar.Header() {
-					@sidebar.Menu() {
-						@sidebar.MenuItem() {
-							@sidebar.MenuButton(sidebar.MenuButtonProps{
-								Href: "/",
-							}) {
-								<span class="font-semibold">pi-ntop</span>
-							}
-						}
-					}
-				}
-				@sidebar.Content() {
-					@sidebar.Group() {
-						@sidebar.GroupLabel() {
-							Interfaces
-						}
-						@sidebar.Menu() {
-							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/#interfaces"}) {
-									<span>Interfaces</span>
-								}
-							}
-						}
-					}
-					@sidebar.Separator()
-					@sidebar.Group() {
-						@sidebar.GroupLabel() {
-							Path Discovery
-						}
-						@sidebar.Menu() {
-							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/#targets"}) {
-									<span>Targets</span>
-								}
-							}
-							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/#trace_runs"}) {
-									<span>Trace Runs</span>
-								}
-							}
-						}
-					}
-					@sidebar.Separator()
-					@sidebar.Group() {
-						@sidebar.GroupLabel() {
-							Speed Tests
-						}
-						@sidebar.Menu() {
-							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{
-									Href:     "/speed-tests",
-									IsActive: true,
-								}) {
-									<span>Speed Tests</span>
-								}
-							}
-						}
-					}
-					@sidebar.Separator()
-					@sidebar.Group() {
-						@sidebar.GroupLabel() {
-							Alerts
-						}
-						@sidebar.Menu() {
-							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/#alerts"}) {
-									<span>Alerts</span>
-								}
-							}
-						}
-					}
-				}
-			}
-			@sidebar.Inset() {
-				<div class="flex h-full flex-col">
-					<div class="flex h-14 items-center gap-4 px-6 border-b border-border">
-						@sidebar.Trigger()
-						<h1 class="text-base font-semibold">Speed Tests</h1>
-						<div class="ml-auto flex items-center gap-1 rounded-lg border border-border bg-background p-0.5">
-							for _, opt := range periodOptions {
-								<a
-									href={ templ.SafeURL("/speed-tests?period=" + opt.Value) }
-									class={
-										"rounded-md px-3 py-1 text-xs font-medium transition-colors",
-										templ.KV("bg-primary text-primary-foreground", data.Period == opt.Value),
-										templ.KV("text-muted-foreground hover:bg-accent hover:text-accent-foreground", data.Period != opt.Value),
-									}
-								>
-									{ opt.Label }
-								</a>
+		@shared.AppSidebar(shared.NavContext{ActivePage: "speed-tests"})
+		@sidebar.Inset() {
+			<div class="flex h-full flex-col">
+				<div class="flex h-14 items-center gap-4 px-6 border-b border-border">
+					@sidebar.Trigger()
+					<h1 class="text-base font-semibold">Speed Tests</h1>
+					@shared.PeriodPicker("/speed-tests", data.Period)
+				</div>
+				<div class="flex-1 overflow-auto p-6">
+					<div class="mb-6 rounded-lg border border-border bg-muted/50 p-4 text-sm text-muted-foreground">
+						<p class="font-medium text-foreground">Download &amp; Upload Speed Tests</p>
+						<p class="mt-1">Periodic download/upload speed and latency measurements against configured targets. Use this to track ISP performance over time, detect speed degradation, and compare against interface throughput to distinguish local congestion from upstream issues.</p>
+					</div>
+					if len(data.Targets) == 0 {
+						@emptyState()
+					} else {
+						<div class="grid gap-6">
+							for i, target := range data.Targets {
+								@targetCard(i, target)
 							}
 						</div>
-					</div>
-					<div class="flex-1 overflow-auto p-6">
-						if len(data.Targets) == 0 {
-							@emptyState()
-						} else {
-							<div class="grid gap-6">
-								for i, target := range data.Targets {
-									@targetCard(i, target)
-								}
-							</div>
-						}
-					</div>
+					}
 				</div>
-			}
+			</div>
+		}
 	}
 }
 

@@ -1,0 +1,140 @@
+package alerts
+
+import (
+	"fmt"
+	"time"
+	"github.com/templui/templui/components/card"
+	"github.com/templui/templui/components/sidebar"
+	"pi-ntop/internal/ui/shared"
+)
+
+type AlertData struct {
+	ID             int64
+	Severity       string
+	SourceType     string
+	SourceName     string
+	MetricKey      string
+	Status         string
+	Message        string
+	ThresholdValue float64
+	CurrentValue   float64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastSeenAt     time.Time
+	ResolvedAt     time.Time
+}
+
+type PageData struct {
+	Period     string
+	Alerts     []AlertData
+	TotalCount int
+	ActiveCount int
+	CriticalCount int
+	WarningCount  int
+}
+
+templ AlertsPage(data PageData) {
+	@shared.PageHead("Alerts")
+	@sidebar.Layout(sidebar.LayoutProps{Class: "h-svh"}) {
+		@shared.AppSidebar(shared.NavContext{ActivePage: "alerts"})
+		@sidebar.Inset() {
+			<div class="flex h-full flex-col">
+				<div class="flex h-14 items-center gap-4 px-6 border-b border-border">
+					@sidebar.Trigger()
+					<h1 class="text-base font-semibold">Alerts</h1>
+					<div class="flex items-center gap-2 text-xs text-muted-foreground">
+						if data.ActiveCount > 0 {
+							<span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 font-medium text-red-700 dark:bg-red-900/40 dark:text-red-400">
+								{ fmt.Sprintf("%d active", data.ActiveCount) }
+							</span>
+						}
+						if data.CriticalCount > 0 {
+							<span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 font-medium text-red-700 dark:bg-red-900/40 dark:text-red-400">
+								{ fmt.Sprintf("%d critical", data.CriticalCount) }
+							</span>
+						}
+						if data.WarningCount > 0 {
+							<span class="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 font-medium text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400">
+								{ fmt.Sprintf("%d warning", data.WarningCount) }
+							</span>
+						}
+					</div>
+					@shared.PeriodPicker("/alerts", data.Period)
+				</div>
+				<div class="flex-1 overflow-auto p-6">
+					<div class="mb-6 rounded-lg border border-border bg-muted/50 p-4 text-sm text-muted-foreground">
+						<p class="font-medium text-foreground">Alert History</p>
+						<p class="mt-1">Active and recently resolved alerts based on configured thresholds. Alerts are generated when speed tests drop below minimum download speed, latency exceeds limits, packet loss rises, or traceroute paths change. Critical alerts indicate values at 2× the threshold.</p>
+					</div>
+					if len(data.Alerts) == 0 {
+						@shared.EmptyState("No alerts in selected period.", "Alerts are generated based on configured thresholds.")
+					} else {
+						<div class="grid gap-4">
+							for _, alert := range data.Alerts {
+								@alertCard(alert)
+							}
+						</div>
+					}
+				</div>
+			</div>
+		}
+	}
+}
+
+templ alertCard(alert AlertData) {
+	@card.Card(card.Props{
+		Class: cardBorderClass(alert.Severity, alert.Status),
+	}) {
+		@card.Header() {
+			<div class="flex w-full items-center justify-between">
+				<div class="flex items-center gap-2">
+					if alert.Severity == "critical" {
+						<span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/40 dark:text-red-400">critical</span>
+					} else {
+						<span class="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400">warning</span>
+					}
+					if alert.Status == "active" {
+						<span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/40 dark:text-red-400">active</span>
+					} else {
+						<span class="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">resolved</span>
+					}
+					<span class="text-sm font-medium">{ alert.SourceName }</span>
+					<span class="text-xs text-muted-foreground">{ alert.MetricKey }</span>
+				</div>
+				<div class="flex items-center gap-4 text-xs text-muted-foreground">
+					<span>{ alert.SourceType }</span>
+					<span>{ formatAlertTime(alert.UpdatedAt) }</span>
+				</div>
+			</div>
+		}
+		@card.Content(card.ContentProps{Class: "pt-2"}) {
+			<p class="text-sm">{ alert.Message }</p>
+			<div class="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
+				<span>Threshold: <span class="font-medium text-foreground">{ fmt.Sprintf("%.2f", alert.ThresholdValue) }</span></span>
+				<span>Current: <span class="font-medium text-foreground">{ fmt.Sprintf("%.2f", alert.CurrentValue) }</span></span>
+				<span>First seen: { formatAlertTime(alert.CreatedAt) }</span>
+				<span>Last seen: { formatAlertTime(alert.LastSeenAt) }</span>
+				if !alert.ResolvedAt.IsZero() {
+					<span>Resolved: { formatAlertTime(alert.ResolvedAt) }</span>
+				}
+			</div>
+		}
+	}
+}
+
+func cardBorderClass(severity, status string) string {
+	if status != "active" {
+		return "border-l-4 border-l-green-500/40"
+	}
+	if severity == "critical" {
+		return "border-l-4 border-l-red-500"
+	}
+	return "border-l-4 border-l-yellow-500"
+}
+
+func formatAlertTime(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.Format("01/02 15:04")
+}

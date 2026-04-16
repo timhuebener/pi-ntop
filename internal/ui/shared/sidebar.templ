@@ -1,0 +1,98 @@
+package shared
+
+import "github.com/templui/templui/components/sidebar"
+
+type NavContext struct {
+	ActivePage string
+}
+
+templ AppSidebar(nav NavContext) {
+	@sidebar.Sidebar(sidebar.Props{
+		Collapsed: false,
+	}) {
+		@sidebar.Header() {
+			@sidebar.Menu() {
+				@sidebar.MenuItem() {
+					@sidebar.MenuButton(sidebar.MenuButtonProps{
+						Href: "/",
+					}) {
+						<span class="font-semibold">pi-ntop</span>
+					}
+				}
+			}
+		}
+		@sidebar.Content() {
+			@sidebar.Group() {
+				@sidebar.GroupLabel() {
+					Interfaces
+				}
+				@sidebar.Menu() {
+					@sidebar.MenuItem() {
+						@sidebar.MenuButton(sidebar.MenuButtonProps{
+							Href:     "/interfaces",
+							IsActive: nav.ActivePage == "interfaces",
+						}) {
+							<span>Interfaces</span>
+						}
+					}
+				}
+			}
+			@sidebar.Separator()
+			@sidebar.Group() {
+				@sidebar.GroupLabel() {
+					Path Discovery
+				}
+				@sidebar.Menu() {
+					@sidebar.MenuItem() {
+						@sidebar.MenuButton(sidebar.MenuButtonProps{
+							Href:     "/trace-runs",
+							IsActive: nav.ActivePage == "trace-runs",
+						}) {
+							<span>Trace Runs</span>
+						}
+					}
+					@sidebar.MenuItem() {
+						@sidebar.MenuButton(sidebar.MenuButtonProps{
+							Href:     "/trace-hops",
+							IsActive: nav.ActivePage == "trace-hops",
+						}) {
+							<span>Trace Hops</span>
+						}
+					}
+				}
+			}
+			@sidebar.Separator()
+			@sidebar.Group() {
+				@sidebar.GroupLabel() {
+					Speed Tests
+				}
+				@sidebar.Menu() {
+					@sidebar.MenuItem() {
+						@sidebar.MenuButton(sidebar.MenuButtonProps{
+							Href:     "/speed-tests",
+							IsActive: nav.ActivePage == "speed-tests",
+						}) {
+							<span>Speed Tests</span>
+						}
+					}
+				}
+			}
+			@sidebar.Separator()
+			@sidebar.Group() {
+				@sidebar.GroupLabel() {
+					Alerts
+				}
+				@sidebar.Menu() {
+					@sidebar.MenuItem() {
+						@sidebar.MenuButton(sidebar.MenuButtonProps{
+							Href:     "/alerts",
+							IsActive: nav.ActivePage == "alerts",
+						}) {
+							<span>Alerts</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}

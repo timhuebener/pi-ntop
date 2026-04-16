@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	defaultSampleInterval = time.Second
+	defaultSampleInterval = 10 * time.Second
 	defaultHistoryLimit   = 30
 	defaultPathHistory    = 6
 	defaultSpeedHistory   = 12
@@ -650,4 +650,345 @@ func parseTimestamp(value string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unsupported timestamp format %q", value)
+}
+
+// InterfaceHistorySince returns interface throughput history since the given
+// time. For short windows (≤1h) it uses raw samples; for longer windows it
+// uses 1-minute rollups so the query stays fast regardless of period.
+func (s *Service) InterfaceHistorySince(ctx context.Context, since time.Time) ([]InterfaceSnapshot, error) {
+	latestRows, err := s.listLatest(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	sinceStr := formatTimestamp(since)
+	useRollup := time.Since(since) > time.Hour
+
+	historyByIface := make(map[int64][]ThroughputPoint)
+
+	if useRollup {
+		const rollupQuery = `
+			SELECT interface_id, window_start, avg_rx_bps, avg_tx_bps
+			FROM interface_samples_1m
+			WHERE window_start >= ?
+			ORDER BY interface_id ASC, window_start ASC;
+		`
+		rows, err := s.db.QueryContext(ctx, rollupQuery, sinceStr)
+		if err != nil {
+			return nil, fmt.Errorf("query rollup interface history: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var (
+				ifaceID   int64
+				windowRaw string
+				point     ThroughputPoint
+			)
+			if err := rows.Scan(&ifaceID, &windowRaw, &point.RXBps, &point.TXBps); err != nil {
+				return nil, fmt.Errorf("scan rollup interface history: %w", err)
+			}
+			t, err := parseTimestamp(windowRaw)
+			if err != nil {
+				return nil, fmt.Errorf("parse rollup interface ts: %w", err)
+			}
+			point.CapturedAt = t
+			historyByIface[ifaceID] = append(historyByIface[ifaceID], point)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate rollup interface history: %w", err)
+		}
+	} else {
+		const rawQuery = `
+			SELECT interface_id, captured_at, rx_bps, tx_bps
+			FROM interface_samples
+			WHERE captured_at >= ?
+			ORDER BY interface_id ASC, captured_at ASC;
+		`
+		rows, err := s.db.QueryContext(ctx, rawQuery, sinceStr)
+		if err != nil {
+			return nil, fmt.Errorf("query raw interface history: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var (
+				ifaceID     int64
+				capturedRaw string
+				point       ThroughputPoint
+			)
+			if err := rows.Scan(&ifaceID, &capturedRaw, &point.RXBps, &point.TXBps); err != nil {
+				return nil, fmt.Errorf("scan raw interface history: %w", err)
+			}
+			t, err := parseTimestamp(capturedRaw)
+			if err != nil {
+				return nil, fmt.Errorf("parse raw interface ts: %w", err)
+			}
+			point.CapturedAt = t
+			historyByIface[ifaceID] = append(historyByIface[ifaceID], point)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate raw interface history: %w", err)
+		}
+	}
+
+	snapshots := make([]InterfaceSnapshot, 0, len(latestRows))
+	for _, row := range latestRows {
+		history := historyByIface[row.ID]
+
+		peak := row.RXBps + row.TXBps
+		for _, point := range history {
+			if total := point.RXBps + point.TXBps; total > peak {
+				peak = total
+			}
+		}
+
+		snapshots = append(snapshots, InterfaceSnapshot{
+			Name:            row.Name,
+			DisplayName:     row.DisplayName,
+			IsActive:        row.IsActive,
+			IsLoopback:      row.IsLoopback,
+			CapturedAt:      row.CapturedAt,
+			RXBytesTotal:    row.RXBytesTotal,
+			TXBytesTotal:    row.TXBytesTotal,
+			RXBps:           row.RXBps,
+			TXBps:           row.TXBps,
+			History:         history,
+			CombinedPeakBps: peak,
+		})
+	}
+
+	return snapshots, nil
+}
+
+// TraceRunHistorySince returns trace run data since the given time for the dedicated view.
+// Runs are downsampled to at most 500 per target for chart performance.
+func (s *Service) TraceRunHistorySince(ctx context.Context, since time.Time) ([]TargetPathSnapshot, error) {
+	latestRows, err := s.listLatestTraceRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	const maxRunsPerTarget = 500
+
+	sinceStr := formatTimestamp(since)
+
+	const runsQuery = `
+		WITH numbered AS (
+			SELECT id, target_id, started_at, completed_at, hop_count, status,
+			       route_fingerprint, route_changed, degraded_hop_count, error_message,
+			       ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at ASC) AS rn,
+			       COUNT(*) OVER (PARTITION BY target_id) AS cnt
+			FROM trace_runs
+			WHERE started_at >= ?
+		)
+		SELECT id, target_id, started_at, completed_at, hop_count, status,
+		       route_fingerprint, route_changed, degraded_hop_count, error_message
+		FROM numbered
+		WHERE cnt <= ? OR rn % MAX(1, cnt / ?) = 0 OR rn = cnt
+		ORDER BY target_id ASC, started_at ASC;
+	`
+
+	rows, err := s.db.QueryContext(ctx, runsQuery, sinceStr, maxRunsPerTarget, maxRunsPerTarget)
+	if err != nil {
+		return nil, fmt.Errorf("query trace runs since: %w", err)
+	}
+	defer rows.Close()
+
+	type runRow struct {
+		ID               int64
+		TargetID         int64
+		StartedAt        time.Time
+		CompletedAt      time.Time
+		HopCount         int
+		Status           string
+		RouteFingerprint string
+		RouteChanged     bool
+		DegradedHopCount int
+		ErrorMessage     string
+	}
+
+	runsByTarget := make(map[int64][]runRow)
+	for rows.Next() {
+		var (
+			r               runRow
+			startedAtRaw    string
+			completedAtRaw  string
+			routeChangedRaw int
+		)
+		if err := rows.Scan(&r.ID, &r.TargetID, &startedAtRaw, &completedAtRaw,
+			&r.HopCount, &r.Status, &r.RouteFingerprint, &routeChangedRaw,
+			&r.DegradedHopCount, &r.ErrorMessage); err != nil {
+			return nil, fmt.Errorf("scan trace run: %w", err)
+		}
+		t, err := parseTimestamp(startedAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse trace run start: %w", err)
+		}
+		r.StartedAt = t
+		ct, err := parseTimestamp(completedAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse trace run completion: %w", err)
+		}
+		r.CompletedAt = ct
+		r.RouteChanged = routeChangedRaw == 1
+		runsByTarget[r.TargetID] = append(runsByTarget[r.TargetID], r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate trace runs since: %w", err)
+	}
+
+	// Only load hops for the latest run per target (used by Trace Hops view).
+	// Historical run hops are not displayed — only summaries are charted.
+	latestRunIDs := make([]int64, 0, len(latestRows))
+	for _, row := range latestRows {
+		if row.RunID.Valid {
+			latestRunIDs = append(latestRunIDs, row.RunID.Int64)
+		}
+	}
+	hopsByRun, err := s.listTraceHopsByRun(ctx, latestRunIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	targets := make([]TargetPathSnapshot, 0, len(latestRows))
+	for _, row := range latestRows {
+		target := TargetPathSnapshot{
+			ID:                   row.TargetID,
+			Name:                 row.TargetName,
+			Host:                 row.TargetHost,
+			ProbeIntervalSeconds: row.ProbeIntervalSeconds,
+			Status:               "pending",
+		}
+
+		runs := runsByTarget[row.TargetID]
+		summaries := make([]TraceRunSummary, 0, len(runs))
+		for _, r := range runs {
+			summaries = append(summaries, TraceRunSummary{
+				StartedAt:        r.StartedAt,
+				HopCount:         r.HopCount,
+				Status:           r.Status,
+				RouteChanged:     r.RouteChanged,
+				DegradedHopCount: r.DegradedHopCount,
+			})
+		}
+		target.RecentRuns = summaries
+
+		if row.RunID.Valid {
+			startedAt, err := parseTimestamp(row.StartedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse trace run start: %w", err)
+			}
+			completedAt := startedAt
+			if row.CompletedAt.Valid {
+				completedAt, err = parseTimestamp(row.CompletedAt.String)
+				if err != nil {
+					return nil, fmt.Errorf("parse trace run completion: %w", err)
+				}
+			}
+			latestRun := &TraceRunSnapshot{
+				ID:               row.RunID.Int64,
+				StartedAt:        startedAt,
+				CompletedAt:      completedAt,
+				HopCount:         int(row.HopCount.Int64),
+				Status:           row.Status.String,
+				RouteFingerprint: row.RouteFingerprint.String,
+				RouteChanged:     row.RouteChanged.Int64 == 1,
+				DegradedHopCount: int(row.DegradedHopCount.Int64),
+				ErrorMessage:     row.ErrorMessage.String,
+				Hops:             hopsByRun[row.RunID.Int64],
+			}
+			target.LatestRun = latestRun
+			target.Status = latestRun.Status
+			target.RouteChanged = latestRun.RouteChanged
+			target.HasDegradedHop = latestRun.DegradedHopCount > 0
+		}
+
+		targets = append(targets, target)
+	}
+
+	return targets, nil
+}
+
+// TraceHopHistorySince returns all trace hops for runs since the given time,
+// grouped by target then by run.
+func (s *Service) TraceHopHistorySince(ctx context.Context, since time.Time) ([]TargetPathSnapshot, error) {
+	return s.TraceRunHistorySince(ctx, since)
+}
+
+// AlertHistorySince returns alerts (active + recently resolved) since the given time,
+// capped at 500 results to keep page loads fast.
+func (s *Service) AlertHistorySince(ctx context.Context, since time.Time) ([]AlertSnapshot, int, error) {
+	sinceStr := formatTimestamp(since)
+
+	const maxAlerts = 500
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts WHERE updated_at >= ?;`, sinceStr).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count alerts since: %w", err)
+	}
+
+	const query = `
+		SELECT id, severity, source_type, source_id, source_name, metric_key, status, message,
+		       threshold_value, current_value, created_at, updated_at, last_seen_at, resolved_at
+		FROM alerts
+		WHERE updated_at >= ?
+		ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+		         CASE status WHEN 'active' THEN 0 ELSE 1 END,
+		         updated_at DESC
+		LIMIT ?;
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, sinceStr, maxAlerts)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query alerts since: %w", err)
+	}
+	defer rows.Close()
+
+	alerts := make([]AlertSnapshot, 0)
+	for rows.Next() {
+		var (
+			alert         AlertSnapshot
+			createdAtRaw  string
+			updatedAtRaw  string
+			lastSeenAtRaw string
+			resolvedAtRaw string
+		)
+		if err := rows.Scan(
+			&alert.ID, &alert.Severity, &alert.SourceType, &alert.SourceID,
+			&alert.SourceName, &alert.MetricKey, &alert.Status, &alert.Message,
+			&alert.ThresholdValue, &alert.CurrentValue,
+			&createdAtRaw, &updatedAtRaw, &lastSeenAtRaw, &resolvedAtRaw,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan alert: %w", err)
+		}
+		createdAt, err := parseTimestamp(createdAtRaw)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse alert created_at: %w", err)
+		}
+		updatedAt, err := parseTimestamp(updatedAtRaw)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse alert updated_at: %w", err)
+		}
+		lastSeenAt, err := parseTimestamp(lastSeenAtRaw)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse alert last_seen_at: %w", err)
+		}
+		alert.CreatedAt = createdAt
+		alert.UpdatedAt = updatedAt
+		alert.LastSeenAt = lastSeenAt
+		if resolvedAtRaw != "" {
+			resolvedAt, err := parseTimestamp(resolvedAtRaw)
+			if err != nil {
+				return nil, 0, fmt.Errorf("parse alert resolved_at: %w", err)
+			}
+			alert.ResolvedAt = resolvedAt
+		}
+		alerts = append(alerts, alert)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate alerts since: %w", err)
+	}
+
+	return alerts, total, nil
 }

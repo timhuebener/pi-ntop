@@ -1,0 +1,172 @@
+package tracehops
+
+import (
+	"fmt"
+	"github.com/templui/templui/components/card"
+	"github.com/templui/templui/components/chart"
+	"github.com/templui/templui/components/sidebar"
+	"pi-ntop/internal/ui/shared"
+)
+
+type HopData struct {
+	HopIndex  int
+	Address   string
+	Hostname  string
+	AvgRTTMs  float64
+	JitterMs  float64
+	LossPct   float64
+	IsTimeout bool
+}
+
+type TargetHopData struct {
+	Name           string
+	Host           string
+	Status         string
+	HasDegradedHop bool
+	Labels         []string // hop labels (hop 1, hop 2, ...)
+	AvgRTTMs       []float64
+	JitterMs       []float64
+	LossPct        []float64
+	Hops           []HopData
+	RunCount       int
+}
+
+type PageData struct {
+	Period  string
+	Targets []TargetHopData
+}
+
+templ TraceHopsPage(data PageData) {
+	@shared.PageHead("Trace Hops")
+	@sidebar.Layout(sidebar.LayoutProps{Class: "h-svh"}) {
+		@shared.AppSidebar(shared.NavContext{ActivePage: "trace-hops"})
+		@sidebar.Inset() {
+			<div class="flex h-full flex-col">
+				<div class="flex h-14 items-center gap-4 px-6 border-b border-border">
+					@sidebar.Trigger()
+					<h1 class="text-base font-semibold">Trace Hops</h1>
+					@shared.PeriodPicker("/trace-hops", data.Period)
+				</div>
+				<div class="flex-1 overflow-auto p-6">
+					<div class="mb-6 rounded-lg border border-border bg-muted/50 p-4 text-sm text-muted-foreground">
+						<p class="font-medium text-foreground">Per-Hop Latency &amp; Loss</p>
+						<p class="mt-1">Detailed view of each hop in the latest traceroute to each target. The bar chart and table show average RTT and packet loss per hop, making it easy to pinpoint exactly where in the network path degradation occurs — whether at your gateway, ISP edge, or a remote peer.</p>
+					</div>
+					if len(data.Targets) == 0 {
+						@shared.EmptyState("No trace targets configured.", "Add targets via the PI_NTOP_TRACE_TARGETS environment variable.")
+					} else {
+						<div class="grid gap-6">
+							for i, target := range data.Targets {
+								@traceHopCard(i, target)
+							}
+						</div>
+					}
+				</div>
+			</div>
+		}
+	}
+}
+
+templ traceHopCard(idx int, target TargetHopData) {
+	@card.Card(card.Props{Class: "flex flex-col flex-1 min-h-0"}) {
+		@card.Header() {
+			<div class="flex w-full items-center justify-between">
+				<div class="flex items-center gap-2">
+					<span class="text-sm font-medium">{ target.Name }</span>
+					<span class="text-xs text-muted-foreground">({ target.Host })</span>
+					if target.HasDegradedHop {
+						<span class="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400">degraded</span>
+					} else if target.Status == "completed" {
+						<span class="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">healthy</span>
+					}
+				</div>
+				<div class="flex items-center gap-4 text-xs text-muted-foreground">
+					if len(target.Hops) > 0 {
+						<span>{ fmt.Sprintf("%d hop(s)", len(target.Hops)) }</span>
+					}
+					<span class="text-muted-foreground/70">{ fmt.Sprintf("%d run(s)", target.RunCount) }</span>
+				</div>
+			</div>
+		}
+		@card.Content(card.ContentProps{Class: "flex-1 min-h-0 pt-4"}) {
+			if len(target.Labels) == 0 {
+				<div class="flex h-40 items-center justify-center text-xs text-muted-foreground">
+					No hop data in selected period
+				</div>
+			} else {
+				@chart.Chart(buildHopChartProps(idx, target))
+				<div class="mt-4 overflow-x-auto">
+					<table class="w-full text-xs">
+						<thead>
+							<tr class="border-b border-border text-left text-muted-foreground">
+								<th class="px-2 py-1.5">Hop</th>
+								<th class="px-2 py-1.5">Address</th>
+								<th class="px-2 py-1.5">Hostname</th>
+								<th class="px-2 py-1.5 text-right">RTT (ms)</th>
+								<th class="px-2 py-1.5 text-right">Jitter (ms)</th>
+								<th class="px-2 py-1.5 text-right">Loss (%)</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, hop := range target.Hops {
+								<tr
+									class={
+										"border-b border-border/50",
+										templ.KV("text-yellow-700 dark:text-yellow-400", !hop.IsTimeout && (hop.AvgRTTMs >= 100 || hop.LossPct >= 1)),
+										templ.KV("text-muted-foreground/50", hop.IsTimeout),
+									}
+								>
+									<td class="px-2 py-1.5">{ fmt.Sprintf("%d", hop.HopIndex) }</td>
+									<td class="px-2 py-1.5 font-mono">
+										if hop.IsTimeout {
+											*
+										} else {
+											{ hop.Address }
+										}
+									</td>
+									<td class="px-2 py-1.5">{ hop.Hostname }</td>
+									<td class="px-2 py-1.5 text-right">{ fmt.Sprintf("%.1f", hop.AvgRTTMs) }</td>
+									<td class="px-2 py-1.5 text-right">{ fmt.Sprintf("%.1f", hop.JitterMs) }</td>
+									<td class="px-2 py-1.5 text-right">{ fmt.Sprintf("%.1f", hop.LossPct) }</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+		}
+	}
+}
+
+func buildHopChartProps(idx int, target TargetHopData) chart.Props {
+	return chart.Props{
+		ID:          fmt.Sprintf("hop-chart-%d", idx),
+		Variant:     chart.VariantBar,
+		Class:       "h-[40svh]",
+		ShowXAxis:   true,
+		ShowYAxis:   true,
+		ShowXLabels: true,
+		ShowYLabels: true,
+		ShowXGrid:   false,
+		ShowYGrid:   true,
+		Data: chart.Data{
+			Labels: target.Labels,
+			Datasets: []chart.Dataset{
+				{
+					Label:           "Avg RTT (ms)",
+					Data:            target.AvgRTTMs,
+					BackgroundColor: "#3b82f680",
+					BorderColor:     "#3b82f6",
+					BorderWidth:     1,
+				},
+				{
+					Label:           "Loss (%)",
+					Data:            target.LossPct,
+					BackgroundColor: "#ef444480",
+					BorderColor:     "#ef4444",
+					BorderWidth:     1,
+				},
+			},
+		},
+	}
+}

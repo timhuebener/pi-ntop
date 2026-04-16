@@ -19,7 +19,11 @@ import (
 func New(cfg config.Config, database *sql.DB, monitorService *monitor.Service) *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle("GET /", handlers.NewDashboardHandler(cfg, database, monitorService))
+	mux.Handle("GET /interfaces", handlers.NewInterfacesPageHandler(monitorService))
 	mux.Handle("GET /speed-tests", handlers.NewSpeedTestsPageHandler(monitorService))
+	mux.Handle("GET /trace-runs", handlers.NewTraceRunsPageHandler(monitorService))
+	mux.Handle("GET /trace-hops", handlers.NewTraceHopsPageHandler(monitorService))
+	mux.Handle("GET /alerts", handlers.NewAlertsPageHandler(monitorService))
 	interfaceSnapshotHandler := handlers.NewInterfaceSnapshotHandler(monitorService)
 	mux.Handle("GET /api/interfaces/live", interfaceSnapshotHandler)
 	mux.Handle("GET /api/paths/live", interfaceSnapshotHandler)

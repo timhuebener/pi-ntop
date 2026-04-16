@@ -1,0 +1,62 @@
+package shared
+
+import (
+	"github.com/templui/templui/components/chart"
+	"github.com/templui/templui/components/sidebar"
+)
+
+var PeriodOptions = []struct {
+	Value string
+	Label string
+}{
+	{"1h", "1h"},
+	{"6h", "6h"},
+	{"24h", "24h"},
+	{"7d", "7d"},
+	{"30d", "30d"},
+}
+
+templ PageHead(title string) {
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>{ title } – pi-ntop</title>
+		<link rel="stylesheet" href="/assets/css/output.css"/>
+		<script>
+			(function(){
+				var t = localStorage.getItem('pi-ntop-theme');
+				if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+					document.documentElement.classList.add('dark');
+				}
+			})();
+		</script>
+		@sidebar.Script()
+		@chart.Script()
+	</head>
+}
+
+templ PeriodPicker(basePath, activePeriod string) {
+	<div class="ml-auto flex items-center gap-1 rounded-lg border border-border bg-background p-0.5">
+		for _, opt := range PeriodOptions {
+			<a
+				href={ templ.SafeURL(basePath + "?period=" + opt.Value) }
+				class={
+					"rounded-md px-3 py-1 text-xs font-medium transition-colors",
+					templ.KV("bg-primary text-primary-foreground", activePeriod == opt.Value),
+					templ.KV("text-muted-foreground hover:bg-accent hover:text-accent-foreground", activePeriod != opt.Value),
+				}
+			>
+				{ opt.Label }
+			</a>
+		}
+	</div>
+}
+
+templ EmptyState(primary, secondary string) {
+	<div class="flex flex-1 flex-col items-center justify-center text-center text-muted-foreground">
+		<p class="text-sm">{ primary }</p>
+		if secondary != "" {
+			<p class="mt-1 text-xs">{ secondary }</p>
+		}
+	</div>
+}

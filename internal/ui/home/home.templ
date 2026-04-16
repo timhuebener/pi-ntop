@@ -46,18 +46,8 @@ templ Home() {
 						}
 						@sidebar.Menu() {
 							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#interfaces"}) {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/interfaces"}) {
 									<span>Interfaces</span>
-								}
-							}
-							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#interface_samples"}) {
-									<span>Interface Samples</span>
-								}
-							}
-							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#interface_samples_1m"}) {
-									<span>Interface Samples 1m</span>
 								}
 							}
 						}
@@ -70,17 +60,12 @@ templ Home() {
 						}
 						@sidebar.Menu() {
 							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#targets"}) {
-									<span>Targets</span>
-								}
-							}
-							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#trace_runs"}) {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/trace-runs"}) {
 									<span>Trace Runs</span>
 								}
 							}
 							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#trace_hops"}) {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/trace-hops"}) {
 									<span>Trace Hops</span>
 								}
 							}
@@ -108,7 +93,7 @@ templ Home() {
 						}
 						@sidebar.Menu() {
 							@sidebar.MenuItem() {
-								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#alerts"}) {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/alerts"}) {
 									<span>Alerts</span>
 								}
 							}

@@ -1,0 +1,147 @@
+package interfaces
+
+import (
+	"fmt"
+	"github.com/templui/templui/components/card"
+	"github.com/templui/templui/components/chart"
+	"github.com/templui/templui/components/sidebar"
+	"pi-ntop/internal/ui/shared"
+)
+
+type InterfaceChartData struct {
+	Name        string
+	DisplayName string
+	IsActive    bool
+	IsLoopback  bool
+	Labels      []string
+	RXBps       []float64
+	TXBps       []float64
+	LatestRXBps float64
+	LatestTXBps float64
+	PeakBps     float64
+	SampleCount int
+}
+
+type PageData struct {
+	Period     string
+	Interfaces []InterfaceChartData
+}
+
+templ InterfacesPage(data PageData) {
+	@shared.PageHead("Interfaces")
+	@sidebar.Layout(sidebar.LayoutProps{Class: "h-svh"}) {
+		@shared.AppSidebar(shared.NavContext{ActivePage: "interfaces"})
+		@sidebar.Inset() {
+			<div class="flex h-full flex-col">
+				<div class="flex h-14 items-center gap-4 px-6 border-b border-border">
+					@sidebar.Trigger()
+					<h1 class="text-base font-semibold">Interfaces</h1>
+					@shared.PeriodPicker("/interfaces", data.Period)
+				</div>
+				<div class="flex-1 overflow-auto p-6">
+					<div class="mb-6 rounded-lg border border-border bg-muted/50 p-4 text-sm text-muted-foreground">
+						<p class="font-medium text-foreground">Network Interface Throughput</p>
+						<p class="mt-1">Real-time and historical RX (download) and TX (upload) traffic per interface. Use this to spot bandwidth saturation, correlate with speed test results, and identify unexpected traffic spikes. Loopback interfaces show inter-process communication only.</p>
+					</div>
+					if len(data.Interfaces) == 0 {
+						@shared.EmptyState("No active interfaces detected.", "")
+					} else {
+						<div class="grid gap-6">
+							for i, iface := range data.Interfaces {
+								@interfaceCard(i, iface)
+							}
+						</div>
+					}
+				</div>
+			</div>
+		}
+	}
+}
+
+templ interfaceCard(idx int, iface InterfaceChartData) {
+	@card.Card(card.Props{Class: "flex flex-col flex-1 min-h-0"}) {
+		@card.Header() {
+			<div class="flex w-full items-center justify-between">
+				<div class="flex items-center gap-2">
+					<span class="text-sm font-medium">{ iface.DisplayName }</span>
+					<span class="text-xs text-muted-foreground">({ iface.Name })</span>
+					if iface.IsActive {
+						<span class="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">active</span>
+					} else {
+						<span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/40 dark:text-red-400">inactive</span>
+					}
+					if iface.IsLoopback {
+						<span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">loopback</span>
+					}
+				</div>
+				<div class="flex items-center gap-4 text-xs text-muted-foreground">
+					if iface.LatestRXBps > 0 {
+						<span><span class="font-medium text-foreground">↓ { formatBps(iface.LatestRXBps) }</span></span>
+					}
+					if iface.LatestTXBps > 0 {
+						<span><span class="font-medium text-foreground">↑ { formatBps(iface.LatestTXBps) }</span></span>
+					}
+					if iface.PeakBps > 0 {
+						<span>peak <span class="font-medium text-foreground">{ formatBps(iface.PeakBps) }</span></span>
+					}
+					<span class="text-muted-foreground/70">{ fmt.Sprintf("%d sample(s)", iface.SampleCount) }</span>
+				</div>
+			</div>
+		}
+		@card.Content(card.ContentProps{Class: "flex-1 min-h-0 pt-4"}) {
+			if len(iface.Labels) == 0 {
+				<div class="flex h-40 items-center justify-center text-xs text-muted-foreground">
+					No data in selected period
+				</div>
+			} else {
+				@chart.Chart(buildInterfaceChartProps(idx, iface))
+			}
+		}
+	}
+}
+
+func buildInterfaceChartProps(idx int, iface InterfaceChartData) chart.Props {
+	return chart.Props{
+		ID:          fmt.Sprintf("iface-chart-%d", idx),
+		Variant:     chart.VariantLine,
+		Class:       "h-[60svh]",
+		ShowXAxis:   true,
+		ShowYAxis:   true,
+		ShowXLabels: true,
+		ShowYLabels: true,
+		ShowXGrid:   false,
+		ShowYGrid:   true,
+		Data: chart.Data{
+			Labels: iface.Labels,
+			Datasets: []chart.Dataset{
+				{
+					Label:       "RX (bps)",
+					Data:        iface.RXBps,
+					BorderColor: "#3b82f6",
+					BorderWidth: 2,
+					Tension:     0.3,
+				},
+				{
+					Label:       "TX (bps)",
+					Data:        iface.TXBps,
+					BorderColor: "#10b981",
+					BorderWidth: 2,
+					Tension:     0.3,
+				},
+			},
+		},
+	}
+}
+
+func formatBps(bps float64) string {
+	switch {
+	case bps >= 1_000_000_000:
+		return fmt.Sprintf("%.1f Gbps", bps/1_000_000_000)
+	case bps >= 1_000_000:
+		return fmt.Sprintf("%.1f Mbps", bps/1_000_000)
+	case bps >= 1_000:
+		return fmt.Sprintf("%.1f Kbps", bps/1_000)
+	default:
+		return fmt.Sprintf("%.0f bps", bps)
+	}
+}
