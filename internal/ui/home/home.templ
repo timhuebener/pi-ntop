@@ -1,0 +1,210 @@
+package templates
+
+import (
+	"github.com/templui/templui/components/icon"
+	"github.com/templui/templui/components/sidebar"
+)
+
+
+templ Home() {
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>pi-ntop</title>
+		<link rel="stylesheet" href="/assets/css/output.css"/>
+		<script>
+			(function(){
+				var t = localStorage.getItem('pi-ntop-theme');
+				if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+					document.documentElement.classList.add('dark');
+				}
+			})();
+		</script>
+		@sidebar.Script()
+	</head>
+	<div class="flex min-h-screen">
+		@sidebar.Layout() {
+			@sidebar.Sidebar(sidebar.Props{
+				Collapsed: false,
+			}) {
+				@sidebar.Header() {
+					@sidebar.Menu() {
+						@sidebar.MenuItem() {
+							@sidebar.MenuButton(sidebar.MenuButtonProps{
+								Href: "#",
+							}) {
+								<span class="font-semibold">pi-ntop</span>
+							}
+						}
+					}
+				}
+				@sidebar.Content() {
+					// Interfaces
+					@sidebar.Group() {
+						@sidebar.GroupLabel() {
+							Interfaces
+						}
+						@sidebar.Menu() {
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#interfaces"}) {
+									<span>Interfaces</span>
+								}
+							}
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#interface_samples"}) {
+									<span>Interface Samples</span>
+								}
+							}
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#interface_samples_1m"}) {
+									<span>Interface Samples 1m</span>
+								}
+							}
+						}
+					}
+					@sidebar.Separator()
+					// Path Discovery
+					@sidebar.Group() {
+						@sidebar.GroupLabel() {
+							Path Discovery
+						}
+						@sidebar.Menu() {
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#targets"}) {
+									<span>Targets</span>
+								}
+							}
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#trace_runs"}) {
+									<span>Trace Runs</span>
+								}
+							}
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#trace_hops"}) {
+									<span>Trace Hops</span>
+								}
+							}
+						}
+					}
+					@sidebar.Separator()
+					// Speed Tests
+					@sidebar.Group() {
+						@sidebar.GroupLabel() {
+							Speed Tests
+						}
+						@sidebar.Menu() {
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/speed-tests"}) {
+									<span>Speed Tests</span>
+								}
+							}
+						}
+					}
+					@sidebar.Separator()
+					// Alerts
+					@sidebar.Group() {
+						@sidebar.GroupLabel() {
+							Alerts
+						}
+						@sidebar.Menu() {
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#alerts"}) {
+									<span>Alerts</span>
+								}
+							}
+						}
+					}
+					@sidebar.Separator()
+					// System
+					@sidebar.Group() {
+						@sidebar.GroupLabel() {
+							System
+						}
+						@sidebar.Menu() {
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "#app_metadata"}) {
+									<span>App Metadata</span>
+								}
+							}
+							@sidebar.MenuItem() {
+								@themeSelector()
+							}
+						}
+					}
+				}
+			}
+			@sidebar.Inset() {
+				<div class="flex h-full flex-col">
+					<div class="flex h-14 items-center gap-4 px-6">
+						@sidebar.Trigger()
+						<span class="text-sm text-muted-foreground">Press Ctrl+B to toggle sidebar</span>
+					</div>
+					<div class="flex-1 p-6"></div>
+				</div>
+			}
+		}
+	</div>
+}
+
+templ themeSelector() {
+	<div class="flex w-full flex-col gap-1 px-2 py-1">
+		<span class="text-xs text-muted-foreground">Theme</span>
+		<div class="flex items-center gap-1 rounded-lg border border-border bg-background p-0.5" id="theme-selector">
+			<button
+				type="button"
+				data-theme="light"
+				onclick="piNtopSetTheme('light')"
+				class="flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+				aria-label="Light theme"
+			>
+				@icon.Sun(icon.Props{Class: "size-3.5 shrink-0"})
+				<span>Light</span>
+			</button>
+			<button
+				type="button"
+				data-theme="dark"
+				onclick="piNtopSetTheme('dark')"
+				class="flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+				aria-label="Dark theme"
+			>
+				@icon.Moon(icon.Props{Class: "size-3.5 shrink-0"})
+				<span>Dark</span>
+			</button>
+			<button
+				type="button"
+				data-theme="system"
+				onclick="piNtopSetTheme('system')"
+				class="flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+				aria-label="System theme"
+			>
+				@icon.Monitor(icon.Props{Class: "size-3.5 shrink-0"})
+				<span>System</span>
+			</button>
+		</div>
+	</div>
+	<script>
+		(function(){
+			function piNtopApplyTheme(theme) {
+				var isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+				document.documentElement.classList.toggle('dark', isDark);
+				document.querySelectorAll('#theme-selector [data-theme]').forEach(function(btn){
+					var active = btn.dataset.theme === theme;
+					btn.classList.toggle('bg-sidebar-accent', active);
+					btn.classList.toggle('text-sidebar-accent-foreground', active);
+					btn.classList.toggle('font-medium', active);
+					btn.classList.toggle('text-muted-foreground', !active);
+				});
+			}
+			window.piNtopSetTheme = function(theme) {
+				localStorage.setItem('pi-ntop-theme', theme);
+				piNtopApplyTheme(theme);
+			};
+			piNtopApplyTheme(localStorage.getItem('pi-ntop-theme') || 'system');
+			window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(){
+				if ((localStorage.getItem('pi-ntop-theme') || 'system') === 'system') {
+					piNtopApplyTheme('system');
+				}
+			});
+		})();
+	</script>
+}

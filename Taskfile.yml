@@ -1,17 +1,23 @@
 version: "3"
 
 tasks:
-  run:
-    desc: Run the bootstrap application
-    cmds:
-      - go run ./cmd/pi-ntop
-
   templ:
-    desc: Install the templ CLI locally
+    desc: Run templ with integrated server and hot reload
     cmds:
-      - go install github.com/a-h/templ/cmd/templ@latest
+      - go run github.com/a-h/templ/cmd/templ@v0.3.1001 generate --watch --proxy="http://localhost:8090" --cmd="go run ./cmd/pi-ntop" --open-browser=false
 
-  tidy:
-    desc: Resolve module dependencies
+  tailwind:
+    desc: Watch Tailwind CSS changes
     cmds:
-      - go mod tidy
+      - |
+        TEMPLUI_PATH="$(go list -mod=mod -m -f {{`'{{.Dir}}'`}} github.com/templui/templui)" && \
+        printf '%s\n' \
+          '@source "./**/*.templ";' \
+          "@source \"$TEMPLUI_PATH/components/**/*.templ\";" \
+          > ./assets/css/sources.generated.css && \
+        tailwindcss -i ./assets/css/input.css -o ./assets/css/output.css --watch
+
+  dev:
+    desc: Start development server with hot reload
+    cmds:
+      - task --parallel tailwind templ

@@ -12,13 +12,17 @@ import (
 	"pi-ntop/internal/config"
 	"pi-ntop/internal/httpserver/handlers"
 	"pi-ntop/internal/monitor"
+
+	"github.com/templui/templui/utils"
 )
 
 func New(cfg config.Config, database *sql.DB, monitorService *monitor.Service) *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle("GET /", handlers.NewDashboardHandler(cfg, database, monitorService))
-	mux.Handle("GET /api/interfaces/live", handlers.NewInterfaceSnapshotHandler(monitorService))
-	mux.Handle("GET /api/paths/live", handlers.NewInterfaceSnapshotHandler(monitorService))
+	mux.Handle("GET /speed-tests", handlers.NewSpeedTestsPageHandler(monitorService))
+	interfaceSnapshotHandler := handlers.NewInterfaceSnapshotHandler(monitorService)
+	mux.Handle("GET /api/interfaces/live", interfaceSnapshotHandler)
+	mux.Handle("GET /api/paths/live", interfaceSnapshotHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		statusCode := http.StatusOK
 		response := map[string]string{
@@ -45,6 +49,9 @@ func New(cfg config.Config, database *sql.DB, monitorService *monitor.Service) *
 	if err == nil {
 		mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assetsSubtree))))
 	}
+
+	isDevelopment := cfg.Environment != "production"
+	utils.SetupScriptRoutes(mux, isDevelopment)
 
 	return &http.Server{
 		Addr:              cfg.HTTPAddr,

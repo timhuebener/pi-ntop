@@ -553,6 +553,104 @@ func (s *Service) listLatestSpeedRows(ctx context.Context) ([]latestSpeedRow, er
 	return latest, nil
 }
 
+// SpeedTestHistory returns all speed targets with their full test history since
+// the given time. It is intended for the dedicated speed tests page.
+func (s *Service) SpeedTestHistory(ctx context.Context, since time.Time) ([]SpeedTargetSnapshot, error) {
+	latestRows, err := s.listLatestSpeedRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	historyByTarget, err := s.listSpeedHistorySince(ctx, since)
+	if err != nil {
+		return nil, err
+	}
+
+	targets := make([]SpeedTargetSnapshot, 0, len(latestRows))
+	for _, row := range latestRows {
+		target := SpeedTargetSnapshot{
+			ID:              row.TargetID,
+			Name:            row.Name,
+			DownloadURL:     row.DownloadURL,
+			UploadURL:       row.UploadURL,
+			IntervalSeconds: row.IntervalSeconds,
+			Status:          "pending",
+			History:         historyByTarget[row.TargetID],
+			HasUpload:       row.UploadURL != "",
+		}
+
+		if row.TestID.Valid {
+			startedAt, err := parseTimestamp(row.StartedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse speed test start: %w", err)
+			}
+			completedAt := startedAt
+			if row.CompletedAt.Valid {
+				completedAt, err = parseTimestamp(row.CompletedAt.String)
+				if err != nil {
+					return nil, fmt.Errorf("parse speed test completion: %w", err)
+				}
+			}
+			target.LatestTest = &SpeedTestSnapshot{
+				ID:            row.TestID.Int64,
+				StartedAt:     startedAt,
+				CompletedAt:   completedAt,
+				DownloadBps:   row.DownloadBps.Float64,
+				UploadBps:     row.UploadBps.Float64,
+				LatencyMs:     row.LatencyMs.Float64,
+				DownloadBytes: row.DownloadBytes.Int64,
+				UploadBytes:   row.UploadBytes.Int64,
+				Status:        row.Status.String,
+				ErrorMessage:  row.ErrorMessage.String,
+			}
+			target.Status = target.LatestTest.Status
+			target.IsHealthy = target.LatestTest.Status == "completed"
+		}
+
+		targets = append(targets, target)
+	}
+
+	return targets, nil
+}
+
+func (s *Service) listSpeedHistorySince(ctx context.Context, since time.Time) (map[int64][]SpeedTestPoint, error) {
+	const query = `
+		SELECT target_id, started_at, download_bps, upload_bps, latency_ms, status
+		FROM speed_tests
+		WHERE started_at >= ?
+		ORDER BY target_id ASC, started_at ASC;
+	`
+
+	sinceStr := formatTimestamp(since)
+	rows, err := s.db.QueryContext(ctx, query, sinceStr)
+	if err != nil {
+		return nil, fmt.Errorf("query speed history since: %w", err)
+	}
+	defer rows.Close()
+
+	history := make(map[int64][]SpeedTestPoint)
+	for rows.Next() {
+		var (
+			targetID     int64
+			startedAtRaw string
+			point        SpeedTestPoint
+		)
+		if err := rows.Scan(&targetID, &startedAtRaw, &point.DownloadBps, &point.UploadBps, &point.LatencyMs, &point.Status); err != nil {
+			return nil, fmt.Errorf("scan speed history: %w", err)
+		}
+		startedAt, err := parseTimestamp(startedAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse speed history timestamp: %w", err)
+		}
+		point.StartedAt = startedAt
+		history[targetID] = append(history[targetID], point)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate speed history since: %w", err)
+	}
+	return history, nil
+}
+
 func (s *Service) listSpeedHistory(ctx context.Context, limit int) (map[int64][]SpeedTestPoint, error) {
 	if limit <= 0 {
 		return map[int64][]SpeedTestPoint{}, nil

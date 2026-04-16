@@ -1,15 +1,17 @@
 module pi-ntop
 
-go 1.25.0
+go 1.26.2
 
 require (
 	github.com/a-h/templ v0.3.1001
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/shirou/gopsutil/v4 v4.26.3
+	github.com/templui/templui v1.9.5
 	modernc.org/sqlite v1.48.1
 )
 
 require (
+	github.com/Oudwins/tailwind-merge-go v0.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect

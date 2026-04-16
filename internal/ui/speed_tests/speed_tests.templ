@@ -1,0 +1,260 @@
+package speedtests
+
+import (
+	"fmt"
+	"github.com/templui/templui/components/card"
+	"github.com/templui/templui/components/chart"
+	"github.com/templui/templui/components/sidebar"
+)
+
+type TargetChartData struct {
+	Name           string
+	IsHealthy      bool
+	HasUpload      bool
+	Labels         []string
+	DownloadMbps   []float64
+	UploadMbps     []float64
+	LatencyMs      []float64
+	LatestDownMbps float64
+	LatestUpMbps   float64
+	LatestLatMs    float64
+	TestCount      int
+	FailCount      int
+}
+
+type PageData struct {
+	Period  string
+	Targets []TargetChartData
+}
+
+var periodOptions = []struct {
+	Value string
+	Label string
+}{
+	{"1h", "1h"},
+	{"6h", "6h"},
+	{"24h", "24h"},
+	{"7d", "7d"},
+	{"30d", "30d"},
+}
+
+templ SpeedTestsPage(data PageData) {
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>Speed Tests – pi-ntop</title>
+		<link rel="stylesheet" href="/assets/css/output.css"/>
+		<script>
+			(function(){
+				var t = localStorage.getItem('pi-ntop-theme');
+				if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+					document.documentElement.classList.add('dark');
+				}
+			})();
+		</script>
+		@sidebar.Script()
+		@chart.Script()
+	</head>
+	@sidebar.Layout(sidebar.LayoutProps{Class: "h-svh"}) {
+		@sidebar.Sidebar(sidebar.Props{
+				Collapsed: false,
+			}) {
+				@sidebar.Header() {
+					@sidebar.Menu() {
+						@sidebar.MenuItem() {
+							@sidebar.MenuButton(sidebar.MenuButtonProps{
+								Href: "/",
+							}) {
+								<span class="font-semibold">pi-ntop</span>
+							}
+						}
+					}
+				}
+				@sidebar.Content() {
+					@sidebar.Group() {
+						@sidebar.GroupLabel() {
+							Interfaces
+						}
+						@sidebar.Menu() {
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/#interfaces"}) {
+									<span>Interfaces</span>
+								}
+							}
+						}
+					}
+					@sidebar.Separator()
+					@sidebar.Group() {
+						@sidebar.GroupLabel() {
+							Path Discovery
+						}
+						@sidebar.Menu() {
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/#targets"}) {
+									<span>Targets</span>
+								}
+							}
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/#trace_runs"}) {
+									<span>Trace Runs</span>
+								}
+							}
+						}
+					}
+					@sidebar.Separator()
+					@sidebar.Group() {
+						@sidebar.GroupLabel() {
+							Speed Tests
+						}
+						@sidebar.Menu() {
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{
+									Href:     "/speed-tests",
+									IsActive: true,
+								}) {
+									<span>Speed Tests</span>
+								}
+							}
+						}
+					}
+					@sidebar.Separator()
+					@sidebar.Group() {
+						@sidebar.GroupLabel() {
+							Alerts
+						}
+						@sidebar.Menu() {
+							@sidebar.MenuItem() {
+								@sidebar.MenuButton(sidebar.MenuButtonProps{Href: "/#alerts"}) {
+									<span>Alerts</span>
+								}
+							}
+						}
+					}
+				}
+			}
+			@sidebar.Inset() {
+				<div class="flex h-full flex-col">
+					<div class="flex h-14 items-center gap-4 px-6 border-b border-border">
+						@sidebar.Trigger()
+						<h1 class="text-base font-semibold">Speed Tests</h1>
+						<div class="ml-auto flex items-center gap-1 rounded-lg border border-border bg-background p-0.5">
+							for _, opt := range periodOptions {
+								<a
+									href={ templ.SafeURL("/speed-tests?period=" + opt.Value) }
+									class={
+										"rounded-md px-3 py-1 text-xs font-medium transition-colors",
+										templ.KV("bg-primary text-primary-foreground", data.Period == opt.Value),
+										templ.KV("text-muted-foreground hover:bg-accent hover:text-accent-foreground", data.Period != opt.Value),
+									}
+								>
+									{ opt.Label }
+								</a>
+							}
+						</div>
+					</div>
+					<div class="flex-1 overflow-auto p-6">
+						if len(data.Targets) == 0 {
+							@emptyState()
+						} else {
+							<div class="grid gap-6">
+								for i, target := range data.Targets {
+									@targetCard(i, target)
+								}
+							</div>
+						}
+					</div>
+				</div>
+			}
+	}
+}
+
+templ emptyState() {
+	<div class="flex flex-1 flex-col items-center justify-center text-center text-muted-foreground">
+		<p class="text-sm">No speed test targets configured.</p>
+		<p class="mt-1 text-xs">Add targets via the PI_NTOP_SPEED_TESTS environment variable.</p>
+	</div>
+}
+
+templ targetCard(idx int, target TargetChartData) {
+	@card.Card(card.Props{Class: "flex flex-col flex-1 min-h-0"}) {
+		@card.Header() {
+			<div class="flex w-full items-center justify-between">
+				<div class="flex items-center gap-2">
+					<span class="text-sm font-medium">{ target.Name }</span>
+					if target.IsHealthy {
+						<span class="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">healthy</span>
+					} else {
+						<span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/40 dark:text-red-400">degraded</span>
+					}
+				</div>
+				<div class="flex items-center gap-4 text-xs text-muted-foreground">
+					if target.LatestDownMbps > 0 {
+						<span><span class="font-medium text-foreground">↓ { formatMbps(target.LatestDownMbps) }</span> Mbps</span>
+					}
+					if target.HasUpload && target.LatestUpMbps > 0 {
+						<span><span class="font-medium text-foreground">↑ { formatMbps(target.LatestUpMbps) }</span> Mbps</span>
+					}
+					if target.LatestLatMs > 0 {
+						<span><span class="font-medium text-foreground">{ formatLatency(target.LatestLatMs) }</span> ms</span>
+					}
+					<span class="text-muted-foreground/70">{ fmt.Sprintf("%d test(s)", target.TestCount) }</span>
+				</div>
+			</div>
+		}
+		@card.Content(card.ContentProps{Class: "flex-1 min-h-0 pt-4"}) {
+			if len(target.Labels) == 0 {
+				<div class="flex h-40 items-center justify-center text-xs text-muted-foreground">
+					No data in selected period
+				</div>
+			} else {
+				@chart.Chart(buildChartProps(idx, target))
+			}
+		}
+	}
+}
+
+func buildChartProps(idx int, target TargetChartData) chart.Props {
+	datasets := []chart.Dataset{
+		{
+			Label:       "Download (Mbps)",
+			Data:        target.DownloadMbps,
+			BorderColor: "#3b82f6",
+			BorderWidth: 2,
+			Tension:     0.3,
+		},
+	}
+
+	if target.HasUpload && len(target.UploadMbps) > 0 {
+		datasets = append(datasets, chart.Dataset{
+			Label:       "Upload (Mbps)",
+			Data:        target.UploadMbps,
+			BorderColor: "#10b981",
+			BorderWidth: 2,
+			Tension:     0.3,
+		})
+	}
+
+	return chart.Props{
+		ID:          fmt.Sprintf("speed-chart-%d", idx),
+		Variant:     chart.VariantLine,
+		Class:       "h-[60svh]",
+		ShowXAxis:   true,
+		ShowYAxis:   true,
+		ShowXLabels: true,
+		ShowYLabels: true,
+		ShowXGrid:   false,
+		ShowYGrid:   true,
+		Data: chart.Data{
+			Labels:   target.Labels,
+			Datasets: datasets,
+		},
+	}
+}
+
+func formatMbps(bps float64) string {
+	return fmt.Sprintf("%.1f", bps)
+}
+
+func formatLatency(ms float64) string {
+	return fmt.Sprintf("%.1f", ms)
+}

@@ -1,6 +1,6 @@
 ---
 description: Describe when these instructions should be loaded by the agent based on task context
-applyTo: 'Use these instructions when writing templui .templ files'
+applyTo: '**/*.templ
 ---
 
 # templui Components
