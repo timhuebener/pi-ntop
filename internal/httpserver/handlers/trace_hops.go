@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	"net/http"
-	"time"
 
 	"pi-ntop/internal/monitor"
 	tracehops "pi-ntop/internal/ui/trace_hops"
@@ -18,8 +17,7 @@ func NewTraceHopsPageHandler(monitorService *monitor.Service) http.Handler {
 			period = defaultPeriod
 		}
 
-		dur := defaultPeriods[period]
-		since := time.Now().UTC().Add(-dur)
+		since := resolveSince(period)
 
 		targets, err := monitorService.TraceHopHistorySince(r.Context(), since)
 		if err != nil {

@@ -80,8 +80,14 @@ type RetentionSnapshot struct {
 	JobIntervalSeconds       int       `json:"jobIntervalSeconds"`
 	InterfaceRawSeconds      int       `json:"interfaceRawSeconds"`
 	InterfaceRollupSeconds   int       `json:"interfaceRollupSeconds"`
+	InterfaceDailySeconds    int       `json:"interfaceDailySeconds"`
+	InterfaceWeeklySeconds   int       `json:"interfaceWeeklySeconds"`
 	TraceRetentionSeconds    int       `json:"traceRetentionSeconds"`
+	TraceDailySeconds        int       `json:"traceDailySeconds"`
+	TraceWeeklySeconds       int       `json:"traceWeeklySeconds"`
 	SpeedRetentionSeconds    int       `json:"speedRetentionSeconds"`
+	SpeedDailySeconds        int       `json:"speedDailySeconds"`
+	SpeedWeeklySeconds       int       `json:"speedWeeklySeconds"`
 	ResolvedAlertSeconds     int       `json:"resolvedAlertSeconds"`
 	LastRunAt                time.Time `json:"lastRunAt"`
 	LastSuccessAt            time.Time `json:"lastSuccessAt"`
@@ -89,8 +95,23 @@ type RetentionSnapshot struct {
 	UpsertedInterfaceRollups int64     `json:"upsertedInterfaceRollups"`
 	DeletedInterfaceSamples  int64     `json:"deletedInterfaceSamples"`
 	DeletedInterfaceRollups  int64     `json:"deletedInterfaceRollups"`
+	UpsertedInterfaceDaily   int64     `json:"upsertedInterfaceDaily"`
+	DeletedInterfaceDaily    int64     `json:"deletedInterfaceDaily"`
+	UpsertedInterfaceWeekly  int64     `json:"upsertedInterfaceWeekly"`
+	DeletedInterfaceWeekly   int64     `json:"deletedInterfaceWeekly"`
+	UpsertedInterfaceMonthly int64     `json:"upsertedInterfaceMonthly"`
 	DeletedTraceRuns         int64     `json:"deletedTraceRuns"`
+	UpsertedTraceDaily       int64     `json:"upsertedTraceDaily"`
+	DeletedTraceDaily        int64     `json:"deletedTraceDaily"`
+	UpsertedTraceWeekly      int64     `json:"upsertedTraceWeekly"`
+	DeletedTraceWeekly       int64     `json:"deletedTraceWeekly"`
+	UpsertedTraceMonthly     int64     `json:"upsertedTraceMonthly"`
 	DeletedSpeedTests        int64     `json:"deletedSpeedTests"`
+	UpsertedSpeedDaily       int64     `json:"upsertedSpeedDaily"`
+	DeletedSpeedDaily        int64     `json:"deletedSpeedDaily"`
+	UpsertedSpeedWeekly      int64     `json:"upsertedSpeedWeekly"`
+	DeletedSpeedWeekly       int64     `json:"deletedSpeedWeekly"`
+	UpsertedSpeedMonthly     int64     `json:"upsertedSpeedMonthly"`
 	DeletedResolvedAlerts    int64     `json:"deletedResolvedAlerts"`
 }
 
@@ -653,8 +674,12 @@ func parseTimestamp(value string) (time.Time, error) {
 }
 
 // InterfaceHistorySince returns interface throughput history since the given
-// time. For short windows (≤1h) it uses raw samples; for longer windows it
-// uses 1-minute rollups so the query stays fast regardless of period.
+// time. It selects the appropriate rollup tier based on time range:
+//   - ≤1h: raw samples (10s granularity)
+//   - ≤30d: 1-minute rollups
+//   - ≤90d: daily rollups
+//   - ≤1y: weekly rollups
+//   - >1y or zero since: monthly rollups
 func (s *Service) InterfaceHistorySince(ctx context.Context, since time.Time) ([]InterfaceSnapshot, error) {
 	latestRows, err := s.listLatest(ctx)
 	if err != nil {
@@ -662,74 +687,71 @@ func (s *Service) InterfaceHistorySince(ctx context.Context, since time.Time) ([
 	}
 
 	sinceStr := formatTimestamp(since)
-	useRollup := time.Since(since) > time.Hour
+	age := time.Since(since)
+	isAll := since.IsZero()
 
 	historyByIface := make(map[int64][]ThroughputPoint)
 
-	if useRollup {
-		const rollupQuery = `
-			SELECT interface_id, window_start, avg_rx_bps, avg_tx_bps
-			FROM interface_samples_1m
-			WHERE window_start >= ?
-			ORDER BY interface_id ASC, window_start ASC;
-		`
-		rows, err := s.db.QueryContext(ctx, rollupQuery, sinceStr)
-		if err != nil {
-			return nil, fmt.Errorf("query rollup interface history: %w", err)
-		}
-		defer rows.Close()
+	var query string
+	var tierLabel string
 
-		for rows.Next() {
-			var (
-				ifaceID   int64
-				windowRaw string
-				point     ThroughputPoint
-			)
-			if err := rows.Scan(&ifaceID, &windowRaw, &point.RXBps, &point.TXBps); err != nil {
-				return nil, fmt.Errorf("scan rollup interface history: %w", err)
-			}
-			t, err := parseTimestamp(windowRaw)
-			if err != nil {
-				return nil, fmt.Errorf("parse rollup interface ts: %w", err)
-			}
-			point.CapturedAt = t
-			historyByIface[ifaceID] = append(historyByIface[ifaceID], point)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate rollup interface history: %w", err)
-		}
-	} else {
-		const rawQuery = `
-			SELECT interface_id, captured_at, rx_bps, tx_bps
-			FROM interface_samples
-			WHERE captured_at >= ?
-			ORDER BY interface_id ASC, captured_at ASC;
-		`
-		rows, err := s.db.QueryContext(ctx, rawQuery, sinceStr)
-		if err != nil {
-			return nil, fmt.Errorf("query raw interface history: %w", err)
-		}
-		defer rows.Close()
+	switch {
+	case !isAll && age <= time.Hour:
+		query = `SELECT interface_id, captured_at, rx_bps, tx_bps
+			FROM interface_samples WHERE captured_at >= ?
+			ORDER BY interface_id ASC, captured_at ASC;`
+		tierLabel = "raw"
+	case !isAll && age <= 30*24*time.Hour:
+		query = `SELECT interface_id, window_start, avg_rx_bps, avg_tx_bps
+			FROM interface_samples_1m WHERE window_start >= ?
+			ORDER BY interface_id ASC, window_start ASC;`
+		tierLabel = "1m"
+	case !isAll && age <= 90*24*time.Hour:
+		query = `SELECT interface_id, window_start, avg_rx_bps, avg_tx_bps
+			FROM interface_samples_1d WHERE window_start >= ?
+			ORDER BY interface_id ASC, window_start ASC;`
+		tierLabel = "1d"
+	case !isAll && age <= 365*24*time.Hour:
+		query = `SELECT interface_id, window_start, avg_rx_bps, avg_tx_bps
+			FROM interface_samples_1w WHERE window_start >= ?
+			ORDER BY interface_id ASC, window_start ASC;`
+		tierLabel = "1w"
+	default:
+		query = `SELECT interface_id, window_start, avg_rx_bps, avg_tx_bps
+			FROM interface_samples_1mo WHERE window_start >= ?
+			ORDER BY interface_id ASC, window_start ASC;`
+		tierLabel = "1mo"
+	}
 
-		for rows.Next() {
-			var (
-				ifaceID     int64
-				capturedRaw string
-				point       ThroughputPoint
-			)
-			if err := rows.Scan(&ifaceID, &capturedRaw, &point.RXBps, &point.TXBps); err != nil {
-				return nil, fmt.Errorf("scan raw interface history: %w", err)
-			}
-			t, err := parseTimestamp(capturedRaw)
-			if err != nil {
-				return nil, fmt.Errorf("parse raw interface ts: %w", err)
-			}
-			point.CapturedAt = t
-			historyByIface[ifaceID] = append(historyByIface[ifaceID], point)
+	if isAll {
+		sinceStr = "0000-01-01T00:00:00Z"
+	}
+	_ = tierLabel
+
+	rows, err := s.db.QueryContext(ctx, query, sinceStr)
+	if err != nil {
+		return nil, fmt.Errorf("query interface history (%s): %w", tierLabel, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			ifaceID int64
+			tsRaw   string
+			point   ThroughputPoint
+		)
+		if err := rows.Scan(&ifaceID, &tsRaw, &point.RXBps, &point.TXBps); err != nil {
+			return nil, fmt.Errorf("scan interface history (%s): %w", tierLabel, err)
 		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate raw interface history: %w", err)
+		t, err := parseTimestamp(tsRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse interface ts (%s): %w", tierLabel, err)
 		}
+		point.CapturedAt = t
+		historyByIface[ifaceID] = append(historyByIface[ifaceID], point)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate interface history (%s): %w", tierLabel, err)
 	}
 
 	snapshots := make([]InterfaceSnapshot, 0, len(latestRows))
@@ -762,84 +784,22 @@ func (s *Service) InterfaceHistorySince(ctx context.Context, since time.Time) ([
 }
 
 // TraceRunHistorySince returns trace run data since the given time for the dedicated view.
-// Runs are downsampled to at most 500 per target for chart performance.
+// It selects the appropriate data tier based on time range:
+//   - ≤30d: raw trace_runs (downsampled to 500 per target)
+//   - ≤90d: daily rollups
+//   - ≤1y: weekly rollups
+//   - >1y or zero since: monthly rollups
 func (s *Service) TraceRunHistorySince(ctx context.Context, since time.Time) ([]TargetPathSnapshot, error) {
 	latestRows, err := s.listLatestTraceRows(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	const maxRunsPerTarget = 500
-
-	sinceStr := formatTimestamp(since)
-
-	const runsQuery = `
-		WITH numbered AS (
-			SELECT id, target_id, started_at, completed_at, hop_count, status,
-			       route_fingerprint, route_changed, degraded_hop_count, error_message,
-			       ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at ASC) AS rn,
-			       COUNT(*) OVER (PARTITION BY target_id) AS cnt
-			FROM trace_runs
-			WHERE started_at >= ?
-		)
-		SELECT id, target_id, started_at, completed_at, hop_count, status,
-		       route_fingerprint, route_changed, degraded_hop_count, error_message
-		FROM numbered
-		WHERE cnt <= ? OR rn % MAX(1, cnt / ?) = 0 OR rn = cnt
-		ORDER BY target_id ASC, started_at ASC;
-	`
-
-	rows, err := s.db.QueryContext(ctx, runsQuery, sinceStr, maxRunsPerTarget, maxRunsPerTarget)
-	if err != nil {
-		return nil, fmt.Errorf("query trace runs since: %w", err)
-	}
-	defer rows.Close()
-
-	type runRow struct {
-		ID               int64
-		TargetID         int64
-		StartedAt        time.Time
-		CompletedAt      time.Time
-		HopCount         int
-		Status           string
-		RouteFingerprint string
-		RouteChanged     bool
-		DegradedHopCount int
-		ErrorMessage     string
-	}
-
-	runsByTarget := make(map[int64][]runRow)
-	for rows.Next() {
-		var (
-			r               runRow
-			startedAtRaw    string
-			completedAtRaw  string
-			routeChangedRaw int
-		)
-		if err := rows.Scan(&r.ID, &r.TargetID, &startedAtRaw, &completedAtRaw,
-			&r.HopCount, &r.Status, &r.RouteFingerprint, &routeChangedRaw,
-			&r.DegradedHopCount, &r.ErrorMessage); err != nil {
-			return nil, fmt.Errorf("scan trace run: %w", err)
-		}
-		t, err := parseTimestamp(startedAtRaw)
-		if err != nil {
-			return nil, fmt.Errorf("parse trace run start: %w", err)
-		}
-		r.StartedAt = t
-		ct, err := parseTimestamp(completedAtRaw)
-		if err != nil {
-			return nil, fmt.Errorf("parse trace run completion: %w", err)
-		}
-		r.CompletedAt = ct
-		r.RouteChanged = routeChangedRaw == 1
-		runsByTarget[r.TargetID] = append(runsByTarget[r.TargetID], r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate trace runs since: %w", err)
-	}
+	age := time.Since(since)
+	isAll := since.IsZero()
+	useRollup := isAll || age > 30*24*time.Hour
 
 	// Only load hops for the latest run per target (used by Trace Hops view).
-	// Historical run hops are not displayed — only summaries are charted.
 	latestRunIDs := make([]int64, 0, len(latestRows))
 	for _, row := range latestRows {
 		if row.RunID.Valid {
@@ -849,6 +809,132 @@ func (s *Service) TraceRunHistorySince(ctx context.Context, since time.Time) ([]
 	hopsByRun, err := s.listTraceHopsByRun(ctx, latestRunIDs)
 	if err != nil {
 		return nil, err
+	}
+
+	summariesByTarget := make(map[int64][]TraceRunSummary)
+
+	if !useRollup {
+		const maxRunsPerTarget = 500
+		sinceStr := formatTimestamp(since)
+
+		const runsQuery = `
+			WITH numbered AS (
+				SELECT id, target_id, started_at, completed_at, hop_count, status,
+				       route_fingerprint, route_changed, degraded_hop_count, error_message,
+				       ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at ASC) AS rn,
+				       COUNT(*) OVER (PARTITION BY target_id) AS cnt
+				FROM trace_runs
+				WHERE started_at >= ?
+			)
+			SELECT id, target_id, started_at, completed_at, hop_count, status,
+			       route_fingerprint, route_changed, degraded_hop_count, error_message
+			FROM numbered
+			WHERE cnt <= ? OR rn % MAX(1, cnt / ?) = 0 OR rn = cnt
+			ORDER BY target_id ASC, started_at ASC;
+		`
+
+		rows, err := s.db.QueryContext(ctx, runsQuery, sinceStr, maxRunsPerTarget, maxRunsPerTarget)
+		if err != nil {
+			return nil, fmt.Errorf("query trace runs since: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var (
+				id               int64
+				targetID         int64
+				startedAtRaw     string
+				completedAtRaw   string
+				hopCount         int
+				status           string
+				routeFingerprint string
+				routeChangedRaw  int
+				degradedHopCount int
+				errorMessage     string
+			)
+			if err := rows.Scan(&id, &targetID, &startedAtRaw, &completedAtRaw,
+				&hopCount, &status, &routeFingerprint, &routeChangedRaw,
+				&degradedHopCount, &errorMessage); err != nil {
+				return nil, fmt.Errorf("scan trace run: %w", err)
+			}
+			t, err := parseTimestamp(startedAtRaw)
+			if err != nil {
+				return nil, fmt.Errorf("parse trace run start: %w", err)
+			}
+			summariesByTarget[targetID] = append(summariesByTarget[targetID], TraceRunSummary{
+				StartedAt:        t,
+				HopCount:         hopCount,
+				Status:           status,
+				RouteChanged:     routeChangedRaw == 1,
+				DegradedHopCount: degradedHopCount,
+			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate trace runs since: %w", err)
+		}
+	} else {
+		var table string
+		switch {
+		case !isAll && age <= 90*24*time.Hour:
+			table = "trace_runs_1d"
+		case !isAll && age <= 365*24*time.Hour:
+			table = "trace_runs_1w"
+		default:
+			table = "trace_runs_1mo"
+		}
+
+		sinceStr := "0000-01-01T00:00:00Z"
+		if !isAll {
+			sinceStr = formatTimestamp(since)
+		}
+
+		rollupQuery := fmt.Sprintf(`
+			SELECT target_id, window_start, run_count, avg_hop_count,
+			       avg_degraded_hop_count, fail_count, route_change_count
+			FROM %s
+			WHERE window_start >= ?
+			ORDER BY target_id ASC, window_start ASC;
+		`, table)
+
+		rows, err := s.db.QueryContext(ctx, rollupQuery, sinceStr)
+		if err != nil {
+			return nil, fmt.Errorf("query trace runs (%s): %w", table, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var (
+				targetID         int64
+				tsRaw            string
+				runCount         int
+				avgHopCount      float64
+				avgDegraded      float64
+				failCount        int
+				routeChangeCount int
+			)
+			if err := rows.Scan(&targetID, &tsRaw, &runCount, &avgHopCount,
+				&avgDegraded, &failCount, &routeChangeCount); err != nil {
+				return nil, fmt.Errorf("scan trace run (%s): %w", table, err)
+			}
+			t, err := parseTimestamp(tsRaw)
+			if err != nil {
+				return nil, fmt.Errorf("parse trace run ts (%s): %w", table, err)
+			}
+			status := "completed"
+			if failCount > 0 {
+				status = "degraded"
+			}
+			summariesByTarget[targetID] = append(summariesByTarget[targetID], TraceRunSummary{
+				StartedAt:        t,
+				HopCount:         int(avgHopCount + 0.5),
+				Status:           status,
+				RouteChanged:     routeChangeCount > 0,
+				DegradedHopCount: int(avgDegraded + 0.5),
+			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate trace runs (%s): %w", table, err)
+		}
 	}
 
 	targets := make([]TargetPathSnapshot, 0, len(latestRows))
@@ -861,18 +947,7 @@ func (s *Service) TraceRunHistorySince(ctx context.Context, since time.Time) ([]
 			Status:               "pending",
 		}
 
-		runs := runsByTarget[row.TargetID]
-		summaries := make([]TraceRunSummary, 0, len(runs))
-		for _, r := range runs {
-			summaries = append(summaries, TraceRunSummary{
-				StartedAt:        r.StartedAt,
-				HopCount:         r.HopCount,
-				Status:           r.Status,
-				RouteChanged:     r.RouteChanged,
-				DegradedHopCount: r.DegradedHopCount,
-			})
-		}
-		target.RecentRuns = summaries
+		target.RecentRuns = summariesByTarget[row.TargetID]
 
 		if row.RunID.Valid {
 			startedAt, err := parseTimestamp(row.StartedAt.String)
@@ -920,6 +995,9 @@ func (s *Service) TraceHopHistorySince(ctx context.Context, since time.Time) ([]
 // capped at 500 results to keep page loads fast.
 func (s *Service) AlertHistorySince(ctx context.Context, since time.Time) ([]AlertSnapshot, int, error) {
 	sinceStr := formatTimestamp(since)
+	if since.IsZero() {
+		sinceStr = "0000-01-01T00:00:00Z"
+	}
 
 	const maxAlerts = 500
 

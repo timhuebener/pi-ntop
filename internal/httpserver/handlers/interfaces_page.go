@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"time"
 
 	"pi-ntop/internal/monitor"
 	interfaces "pi-ntop/internal/ui/interfaces"
@@ -17,8 +16,7 @@ func NewInterfacesPageHandler(monitorService *monitor.Service) http.Handler {
 			period = defaultPeriod
 		}
 
-		dur := defaultPeriods[period]
-		since := time.Now().UTC().Add(-dur)
+		since := resolveSince(period)
 
 		ifaces, err := monitorService.InterfaceHistorySince(r.Context(), since)
 		if err != nil {
@@ -28,7 +26,7 @@ func NewInterfacesPageHandler(monitorService *monitor.Service) http.Handler {
 
 		pageData := interfaces.PageData{
 			Period:     period,
-			Interfaces: buildInterfaceCharts(ifaces),
+			Interfaces: buildInterfaceCharts(ifaces, period),
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -36,7 +34,8 @@ func NewInterfacesPageHandler(monitorService *monitor.Service) http.Handler {
 	})
 }
 
-func buildInterfaceCharts(ifaces []monitor.InterfaceSnapshot) []interfaces.InterfaceChartData {
+func buildInterfaceCharts(ifaces []monitor.InterfaceSnapshot, period string) []interfaces.InterfaceChartData {
+	labelFmt := labelFormatForPeriod(period)
 	result := make([]interfaces.InterfaceChartData, 0, len(ifaces))
 	for _, iface := range ifaces {
 		history := iface.History
@@ -45,7 +44,7 @@ func buildInterfaceCharts(ifaces []monitor.InterfaceSnapshot) []interfaces.Inter
 		txBps := make([]float64, len(history))
 
 		for i, pt := range history {
-			labels[i] = pt.CapturedAt.Format("01/02 15:04")
+			labels[i] = pt.CapturedAt.Format(labelFmt)
 			rxBps[i] = pt.RXBps
 			txBps[i] = pt.TXBps
 		}

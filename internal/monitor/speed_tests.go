@@ -615,47 +615,105 @@ func (s *Service) SpeedTestHistory(ctx context.Context, since time.Time) ([]Spee
 
 func (s *Service) listSpeedHistorySince(ctx context.Context, since time.Time) (map[int64][]SpeedTestPoint, error) {
 	const maxPointsPerTarget = 500
+	age := time.Since(since)
+	isAll := since.IsZero()
 
-	const query = `
-		WITH numbered AS (
-			SELECT target_id, started_at, download_bps, upload_bps, latency_ms, status,
-				ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at ASC) AS rn,
-				COUNT(*) OVER (PARTITION BY target_id) AS cnt
-			FROM speed_tests
-			WHERE started_at >= ?
-		)
-		SELECT target_id, started_at, download_bps, upload_bps, latency_ms, status
-		FROM numbered
-		WHERE cnt <= ? OR rn % MAX(1, cnt / ?) = 0 OR rn = cnt
-		ORDER BY target_id ASC, started_at ASC;
-	`
+	history := make(map[int64][]SpeedTestPoint)
 
-	sinceStr := formatTimestamp(since)
-	rows, err := s.db.QueryContext(ctx, query, sinceStr, maxPointsPerTarget, maxPointsPerTarget)
+	// For raw data (≤30d), use the existing downsampled query.
+	// For older data, read from the appropriate rollup table.
+	if !isAll && age <= 30*24*time.Hour {
+		const query = `
+			WITH numbered AS (
+				SELECT target_id, started_at, download_bps, upload_bps, latency_ms, status,
+					ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at ASC) AS rn,
+					COUNT(*) OVER (PARTITION BY target_id) AS cnt
+				FROM speed_tests
+				WHERE started_at >= ?
+			)
+			SELECT target_id, started_at, download_bps, upload_bps, latency_ms, status
+			FROM numbered
+			WHERE cnt <= ? OR rn % MAX(1, cnt / ?) = 0 OR rn = cnt
+			ORDER BY target_id ASC, started_at ASC;
+		`
+
+		sinceStr := formatTimestamp(since)
+		rows, err := s.db.QueryContext(ctx, query, sinceStr, maxPointsPerTarget, maxPointsPerTarget)
+		if err != nil {
+			return nil, fmt.Errorf("query speed history since: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var (
+				targetID     int64
+				startedAtRaw string
+				point        SpeedTestPoint
+			)
+			if err := rows.Scan(&targetID, &startedAtRaw, &point.DownloadBps, &point.UploadBps, &point.LatencyMs, &point.Status); err != nil {
+				return nil, fmt.Errorf("scan speed history: %w", err)
+			}
+			startedAt, err := parseTimestamp(startedAtRaw)
+			if err != nil {
+				return nil, fmt.Errorf("parse speed history timestamp: %w", err)
+			}
+			point.StartedAt = startedAt
+			history[targetID] = append(history[targetID], point)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate speed history since: %w", err)
+		}
+		return history, nil
+	}
+
+	// Rollup tiers for older data.
+	var table string
+	switch {
+	case !isAll && age <= 90*24*time.Hour:
+		table = "speed_tests_1d"
+	case !isAll && age <= 365*24*time.Hour:
+		table = "speed_tests_1w"
+	default:
+		table = "speed_tests_1mo"
+	}
+
+	sinceStr := "0000-01-01T00:00:00Z"
+	if !isAll {
+		sinceStr = formatTimestamp(since)
+	}
+
+	rollupQuery := fmt.Sprintf(`
+		SELECT target_id, window_start, avg_download_bps, avg_upload_bps, avg_latency_ms,
+		       CASE WHEN fail_count > 0 THEN 'degraded' ELSE 'completed' END AS status
+		FROM %s
+		WHERE window_start >= ?
+		ORDER BY target_id ASC, window_start ASC;
+	`, table)
+
+	rows, err := s.db.QueryContext(ctx, rollupQuery, sinceStr)
 	if err != nil {
-		return nil, fmt.Errorf("query speed history since: %w", err)
+		return nil, fmt.Errorf("query speed history (%s): %w", table, err)
 	}
 	defer rows.Close()
 
-	history := make(map[int64][]SpeedTestPoint)
 	for rows.Next() {
 		var (
-			targetID     int64
-			startedAtRaw string
-			point        SpeedTestPoint
+			targetID int64
+			tsRaw    string
+			point    SpeedTestPoint
 		)
-		if err := rows.Scan(&targetID, &startedAtRaw, &point.DownloadBps, &point.UploadBps, &point.LatencyMs, &point.Status); err != nil {
-			return nil, fmt.Errorf("scan speed history: %w", err)
+		if err := rows.Scan(&targetID, &tsRaw, &point.DownloadBps, &point.UploadBps, &point.LatencyMs, &point.Status); err != nil {
+			return nil, fmt.Errorf("scan speed history (%s): %w", table, err)
 		}
-		startedAt, err := parseTimestamp(startedAtRaw)
+		startedAt, err := parseTimestamp(tsRaw)
 		if err != nil {
-			return nil, fmt.Errorf("parse speed history timestamp: %w", err)
+			return nil, fmt.Errorf("parse speed history ts (%s): %w", table, err)
 		}
 		point.StartedAt = startedAt
 		history[targetID] = append(history[targetID], point)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate speed history since: %w", err)
+		return nil, fmt.Errorf("iterate speed history (%s): %w", table, err)
 	}
 	return history, nil
 }

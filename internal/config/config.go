@@ -31,8 +31,14 @@ type RetentionPolicy struct {
 	JobInterval     time.Duration
 	InterfaceRaw    time.Duration
 	InterfaceRollup time.Duration
+	InterfaceDaily  time.Duration
+	InterfaceWeekly time.Duration
 	TraceRuns       time.Duration
+	TraceDaily      time.Duration
+	TraceWeekly     time.Duration
 	SpeedTests      time.Duration
+	SpeedDaily      time.Duration
+	SpeedWeekly     time.Duration
 	ResolvedAlerts  time.Duration
 }
 
@@ -78,10 +84,16 @@ func Load() (Config, error) {
 		},
 		Retention: RetentionPolicy{
 			JobInterval:     10 * time.Minute,
-			InterfaceRaw:    24 * time.Hour,
-			InterfaceRollup: 30 * 24 * time.Hour,
-			TraceRuns:       14 * 24 * time.Hour,
+			InterfaceRaw:    30 * 24 * time.Hour,
+			InterfaceRollup: 90 * 24 * time.Hour,
+			InterfaceDaily:  365 * 24 * time.Hour,
+			InterfaceWeekly: 2 * 365 * 24 * time.Hour,
+			TraceRuns:       30 * 24 * time.Hour,
+			TraceDaily:      365 * 24 * time.Hour,
+			TraceWeekly:     2 * 365 * 24 * time.Hour,
 			SpeedTests:      30 * 24 * time.Hour,
+			SpeedDaily:      365 * 24 * time.Hour,
+			SpeedWeekly:     2 * 365 * 24 * time.Hour,
 			ResolvedAlerts:  7 * 24 * time.Hour,
 		},
 		ShutdownTimeout: 10 * time.Second,
@@ -199,6 +211,22 @@ func Load() (Config, error) {
 		cfg.Retention.InterfaceRollup = value
 	}
 
+	if raw := os.Getenv("PI_NTOP_RETENTION_INTERFACE_DAILY"); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse PI_NTOP_RETENTION_INTERFACE_DAILY: %w", err)
+		}
+		cfg.Retention.InterfaceDaily = value
+	}
+
+	if raw := os.Getenv("PI_NTOP_RETENTION_INTERFACE_WEEKLY"); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse PI_NTOP_RETENTION_INTERFACE_WEEKLY: %w", err)
+		}
+		cfg.Retention.InterfaceWeekly = value
+	}
+
 	if raw := os.Getenv("PI_NTOP_RETENTION_TRACE_RUNS"); raw != "" {
 		value, err := time.ParseDuration(raw)
 		if err != nil {
@@ -207,12 +235,44 @@ func Load() (Config, error) {
 		cfg.Retention.TraceRuns = value
 	}
 
+	if raw := os.Getenv("PI_NTOP_RETENTION_TRACE_DAILY"); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse PI_NTOP_RETENTION_TRACE_DAILY: %w", err)
+		}
+		cfg.Retention.TraceDaily = value
+	}
+
+	if raw := os.Getenv("PI_NTOP_RETENTION_TRACE_WEEKLY"); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse PI_NTOP_RETENTION_TRACE_WEEKLY: %w", err)
+		}
+		cfg.Retention.TraceWeekly = value
+	}
+
 	if raw := os.Getenv("PI_NTOP_RETENTION_SPEED_TESTS"); raw != "" {
 		value, err := time.ParseDuration(raw)
 		if err != nil {
 			return Config{}, fmt.Errorf("parse PI_NTOP_RETENTION_SPEED_TESTS: %w", err)
 		}
 		cfg.Retention.SpeedTests = value
+	}
+
+	if raw := os.Getenv("PI_NTOP_RETENTION_SPEED_DAILY"); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse PI_NTOP_RETENTION_SPEED_DAILY: %w", err)
+		}
+		cfg.Retention.SpeedDaily = value
+	}
+
+	if raw := os.Getenv("PI_NTOP_RETENTION_SPEED_WEEKLY"); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse PI_NTOP_RETENTION_SPEED_WEEKLY: %w", err)
+		}
+		cfg.Retention.SpeedWeekly = value
 	}
 
 	if raw := os.Getenv("PI_NTOP_RETENTION_RESOLVED_ALERTS"); raw != "" {

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"time"
 
 	"pi-ntop/internal/monitor"
 	speedtests "pi-ntop/internal/ui/speed_tests"
@@ -17,8 +16,7 @@ func NewSpeedTestsPageHandler(monitorService *monitor.Service) http.Handler {
 			period = defaultPeriod
 		}
 
-		dur := defaultPeriods[period]
-		since := time.Now().UTC().Add(-dur)
+		since := resolveSince(period)
 
 		targets, err := monitorService.SpeedTestHistory(r.Context(), since)
 		if err != nil {
@@ -28,7 +26,7 @@ func NewSpeedTestsPageHandler(monitorService *monitor.Service) http.Handler {
 
 		pageData := speedtests.PageData{
 			Period:  period,
-			Targets: buildTargetCharts(targets),
+			Targets: buildTargetCharts(targets, period),
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -36,7 +34,8 @@ func NewSpeedTestsPageHandler(monitorService *monitor.Service) http.Handler {
 	})
 }
 
-func buildTargetCharts(targets []monitor.SpeedTargetSnapshot) []speedtests.TargetChartData {
+func buildTargetCharts(targets []monitor.SpeedTargetSnapshot, period string) []speedtests.TargetChartData {
+	labelFmt := labelFormatForPeriod(period)
 	result := make([]speedtests.TargetChartData, 0, len(targets))
 	for _, t := range targets {
 		history := t.History
@@ -47,7 +46,7 @@ func buildTargetCharts(targets []monitor.SpeedTargetSnapshot) []speedtests.Targe
 
 		failCount := 0
 		for i, pt := range history {
-			labels[i] = pt.StartedAt.Format("01/02 15:04")
+			labels[i] = pt.StartedAt.Format(labelFmt)
 			downloadMbps[i] = bpsToMbps(pt.DownloadBps)
 			uploadMbps[i] = bpsToMbps(pt.UploadBps)
 			latencyMs[i] = pt.LatencyMs

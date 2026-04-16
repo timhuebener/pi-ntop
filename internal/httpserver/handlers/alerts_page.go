@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"time"
 
 	"pi-ntop/internal/monitor"
 	alertsui "pi-ntop/internal/ui/alerts"
@@ -17,8 +16,7 @@ func NewAlertsPageHandler(monitorService *monitor.Service) http.Handler {
 			period = defaultPeriod
 		}
 
-		dur := defaultPeriods[period]
-		since := time.Now().UTC().Add(-dur)
+		since := resolveSince(period)
 
 		alerts, total, err := monitorService.AlertHistorySince(r.Context(), since)
 		if err != nil {

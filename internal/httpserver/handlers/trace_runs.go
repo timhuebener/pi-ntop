@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"time"
 
 	"pi-ntop/internal/monitor"
 	traceruns "pi-ntop/internal/ui/trace_runs"
@@ -17,8 +16,7 @@ func NewTraceRunsPageHandler(monitorService *monitor.Service) http.Handler {
 			period = defaultPeriod
 		}
 
-		dur := defaultPeriods[period]
-		since := time.Now().UTC().Add(-dur)
+		since := resolveSince(period)
 
 		targets, err := monitorService.TraceRunHistorySince(r.Context(), since)
 		if err != nil {
@@ -28,7 +26,7 @@ func NewTraceRunsPageHandler(monitorService *monitor.Service) http.Handler {
 
 		pageData := traceruns.PageData{
 			Period:  period,
-			Targets: buildTraceRunCharts(targets),
+			Targets: buildTraceRunCharts(targets, period),
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -36,7 +34,8 @@ func NewTraceRunsPageHandler(monitorService *monitor.Service) http.Handler {
 	})
 }
 
-func buildTraceRunCharts(targets []monitor.TargetPathSnapshot) []traceruns.TraceRunChartData {
+func buildTraceRunCharts(targets []monitor.TargetPathSnapshot, period string) []traceruns.TraceRunChartData {
+	labelFmt := labelFormatForPeriod(period)
 	result := make([]traceruns.TraceRunChartData, 0, len(targets))
 	for _, t := range targets {
 		runs := t.RecentRuns
@@ -47,7 +46,7 @@ func buildTraceRunCharts(targets []monitor.TargetPathSnapshot) []traceruns.Trace
 		failCount := 0
 		routeChanges := 0
 		for i, r := range runs {
-			labels[i] = r.StartedAt.Format("01/02 15:04")
+			labels[i] = r.StartedAt.Format(labelFmt)
 			hopCounts[i] = float64(r.HopCount)
 			degradedCounts[i] = float64(r.DegradedHopCount)
 			if r.Status != "completed" {

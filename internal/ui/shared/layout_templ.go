@@ -22,6 +22,9 @@ var PeriodOptions = []struct {
 	{"24h", "24h"},
 	{"7d", "7d"},
 	{"30d", "30d"},
+	{"90d", "90d"},
+	{"1y", "1y"},
+	{"all", "All"},
 }
 
 func PageHead(title string) templ.Component {
@@ -52,7 +55,7 @@ func PageHead(title string) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 23, Col: 16}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 26, Col: 16}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -119,7 +122,7 @@ func PeriodPicker(basePath, activePeriod string) templ.Component {
 			var templ_7745c5c3_Var5 templ.SafeURL
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(basePath + "?period=" + opt.Value))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 42, Col: 59}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 45, Col: 59}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -145,7 +148,7 @@ func PeriodPicker(basePath, activePeriod string) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(opt.Label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 49, Col: 15}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 52, Col: 15}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -192,7 +195,7 @@ func EmptyState(primary, secondary string) templ.Component {
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(primary)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 57, Col: 30}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 60, Col: 30}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
@@ -210,7 +213,7 @@ func EmptyState(primary, secondary string) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(secondary)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 59, Col: 38}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/shared/layout.templ`, Line: 62, Col: 38}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
